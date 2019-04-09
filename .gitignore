@@ -47,3 +47,9 @@ lost+found
 # ignore ./contrib/gcc_update output
 LAST_UPDATED
 REVISION
+
+.vscode
+gmp*
+isl*
+mpc*
+mpfr*
