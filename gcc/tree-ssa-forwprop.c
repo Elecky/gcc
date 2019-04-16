@@ -695,6 +695,17 @@ forward_propagate_addr_expr_1 (tree name, tree def_rhs,
 			       gimple_stmt_iterator *use_stmt_gsi,
 			       bool single_use_p)
 {
+  /* added by jian.hu, indicates whether def_rhs has patch directive tag */
+  int has_patch_tag = 0;
+  {
+  tree offset_node = TREE_OPERAND(TREE_OPERAND(def_rhs, 0), 1);
+  if (TREE_CODE(offset_node) == INTEGER_CST)
+    {
+          has_patch_tag = offset_node->int_cst.offset_reference != NULL_TREE;
+    }
+//     if (has_patch_tag) printf("met patch tag\n");
+  }
+
   tree lhs, rhs, rhs2, array_ref;
   gimple use_stmt = gsi_stmt (*use_stmt_gsi);
   enum tree_code rhs_code;
@@ -888,27 +899,51 @@ forward_propagate_addr_expr_1 (tree name, tree def_rhs,
   if (TREE_CODE (rhs) == MEM_REF
       && TREE_OPERAND (rhs, 0) == name)
     {
+      // if (has_patch_tag) printf("hit 6\n");
       tree def_rhs_base;
       HOST_WIDE_INT def_rhs_offset;
       if ((def_rhs_base = get_addr_base_and_unit_offset (TREE_OPERAND (def_rhs, 0),
 							 &def_rhs_offset)))
 	{
-	  offset_int off = mem_ref_offset (rhs);
-	  tree new_ptr;
-	  off += def_rhs_offset;
-	  if (TREE_CODE (def_rhs_base) == MEM_REF)
-	    {
-	      off += mem_ref_offset (def_rhs_base);
-	      new_ptr = TREE_OPERAND (def_rhs_base, 0);
-	    }
-	  else
-	    new_ptr = build_fold_addr_expr (def_rhs_base);
-	  TREE_OPERAND (rhs, 0) = new_ptr;
-	  TREE_OPERAND (rhs, 1)
-	    = wide_int_to_tree (TREE_TYPE (TREE_OPERAND (rhs, 1)), off);
-	  fold_stmt_inplace (use_stmt_gsi);
-	  tidy_after_forward_propagate_addr (use_stmt);
-	  return res;
+        if (!has_patch_tag)
+        {
+	    offset_int off = mem_ref_offset (rhs);
+	    tree new_ptr;
+	    off += def_rhs_offset;
+	    if (TREE_CODE (def_rhs_base) == MEM_REF)
+	      {
+	        off += mem_ref_offset (def_rhs_base);
+	        new_ptr = TREE_OPERAND (def_rhs_base, 0);
+	      }
+	    else
+	      new_ptr = build_fold_addr_expr (def_rhs_base);
+	    TREE_OPERAND (rhs, 0) = new_ptr;
+	    TREE_OPERAND (rhs, 1)
+	      = wide_int_to_tree (TREE_TYPE (TREE_OPERAND (rhs, 1)), off);
+	    fold_stmt_inplace (use_stmt_gsi);
+	    tidy_after_forward_propagate_addr (use_stmt);
+	    return res;
+        }
+        else if (integer_zerop (TREE_OPERAND (rhs, 1)))
+        {
+      //     if (has_patch_tag) printf("hit 8\n");
+          /* this case added by jian.hu, when has patch tag and outter MEM_REF offset is zero.
+             pattern is:
+                  lhs=MEM_REF(lhs+0), lhs=ADDR_EXPR(MEM_REF(base+off))
+               => lhs=MEM_REF(base+off) */
+          TREE_OPERAND (rhs, 0) = TREE_OPERAND(TREE_OPERAND (def_rhs, 0), 0);
+          tree offset_node = TREE_OPERAND(TREE_OPERAND (def_rhs, 0), 1);
+          TREE_OPERAND (rhs, 1) = fold_convert (TREE_TYPE (TREE_OPERAND (rhs, 1)),
+					                  offset_node);
+          fold_stmt_inplace (use_stmt_gsi);
+	    tidy_after_forward_propagate_addr (use_stmt);
+	    return res;
+        }
+        else
+        {
+          return false;
+        }
+        
 	}
       /* If the RHS is a plain dereference and the value type is the same as
          that of the pointed-to type of the address we can put the
@@ -969,7 +1004,6 @@ forward_propagate_addr_expr_1 (tree name, tree def_rhs,
        || TREE_CODE (TREE_OPERAND (array_ref, 1)) != INTEGER_CST)
       && TREE_CODE (TREE_TYPE (array_ref)) != ARRAY_TYPE)
     return false;
-
   rhs2 = gimple_assign_rhs2 (use_stmt);
   /* Optimize &x[C1] p+ C2 to  &x p+ C3 with C3 = C1 * element_size + C2.  */
   if (TREE_CODE (rhs2) == INTEGER_CST)

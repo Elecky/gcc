@@ -2336,6 +2336,19 @@ build_invokevirtual (tree dtable, tree method, tree special)
 			     TYPE_OTABLE_DECL (output_class), 
 			     otable_index, NULL_TREE, NULL_TREE);
     }
+  else if (flag_patch_directive)
+    {
+      // by jian.hu, when flag_patch_directive is on, generate ordinary vtable access code, 
+      // but add directive in method_index.
+      method_index = DECL_VINDEX (method);
+      method_index = size_binop (MULT_EXPR, method_index,
+                        TYPE_SIZE_UNIT (nativecode_ptr_ptr_type_node));
+      if (TARGET_VTABLE_USES_DESCRIPTORS)
+      method_index = size_binop (MULT_EXPR, method_index,
+                        size_int (TARGET_VTABLE_USES_DESCRIPTORS));
+      gcc_assert(TREE_CODE(method_index) == INTEGER_CST);
+      INTEGER_CST_CHECK (method_index)->int_cst.offset_reference = method;
+    }
   else
     {
       /* We fetch the DECL_VINDEX field directly here, rather than

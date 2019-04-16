@@ -1161,6 +1161,9 @@ struct GTY(()) tree_common {
 
 struct GTY(()) tree_int_cst {
   struct tree_typed typed;
+  tree offset_reference;  // added by jian.hu, if this filed is not NULL_TREE, then this int_const indicates 
+                          // a field/v-method offset. in that case, offset_reference is the declaration of 
+                          // corresponding field/method-vtable offset.
   HOST_WIDE_INT val[1];
 };
 

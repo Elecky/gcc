@@ -234,6 +234,10 @@ findirect-dispatch
 Java Var(flag_indirect_dispatch)
 Use offset tables for virtual method calls
 
+fpatch-directive
+Java Var(flag_patch_directive)
+generate patch directives instead of using offset tables, must be used with indirect-dispatch
+
 finline-functions
 Java
 

@@ -145,6 +145,15 @@ print_node_brief (FILE *file, const char *prefix, const_tree node, int indent)
 
       fprintf (file, " ");
       print_dec (node, file, TYPE_SIGN (TREE_TYPE (node)));
+      if (node->int_cst.offset_reference != NULL_TREE)
+        {
+          fprintf (file, "[an offset]");
+        }
+        else
+        {
+          printf("non offset integer_cst met\n");
+        }
+        
     }
   if (TREE_CODE (node) == REAL_CST)
     {

@@ -1335,6 +1335,30 @@ force_fit_type (tree type, const wide_int_ref &cst,
   return wide_int_to_tree (type, cst);
 }
 
+/* added bu jian.hu, analogous to force_fit_type, except that this function always create new node,
+   instead of using shared node when no overflow. */
+tree
+force_fit_type_no_share (tree type, const wide_int_ref &cst,
+		int overflowable, bool overflowed)
+{
+  signop sign = TYPE_SIGN (type);
+
+  wide_int tmp = wide_int::from (cst, TYPE_PRECISION (type), sign);
+  tree t = build_new_int_cst (type, tmp);
+
+  /* If we need to set overflow flags, return a new unshared node.  */
+  if (overflowed || !wi::fits_to_tree_p (cst, type))
+    {
+      if (overflowed
+	  || overflowable < 0
+	  || (overflowable > 0 && sign == SIGNED))
+	{  
+	  TREE_OVERFLOW (t) = 1;
+	}
+    }
+  return t;  
+}
+
 /* These are the hash table functions for the hash table of INTEGER_CST
    nodes of a sizetype.  */
 
@@ -2164,6 +2188,8 @@ make_int_cst_stat (int len, int ext_len MEM_STAT_DECL)
     TREE_INT_CST_OFFSET_NUNITS (t) = len;
 
   TREE_CONSTANT (t) = 1;
+
+  t->int_cst.offset_reference = NULL_TREE;  // added by jian.hu, set offset_reference filed to NULL_TREE
 
   return t;
 }
@@ -7113,7 +7139,10 @@ tree_int_cst_equal (const_tree t1, const_tree t2)
 
   if (TREE_CODE (t1) == INTEGER_CST
       && TREE_CODE (t2) == INTEGER_CST
-      && wi::to_widest (t1) == wi::to_widest (t2))
+      && wi::to_widest (t1) == wi::to_widest (t2)
+      && t1->int_cst.offset_reference == t2->int_cst.offset_reference /*the last condition is added
+            by jian.hu, two constants represents offset are considered equal, only if 
+            the reference field/method is the same */)
     return 1;
 
   return 0;

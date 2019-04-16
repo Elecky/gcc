@@ -1866,18 +1866,34 @@ size_diffop_loc (location_t loc, tree arg0, tree arg1)
 							     arg1, arg0)));
 }
 
+tree force_fit_type_no_share (tree, const wide_int_ref &, int, bool);
+
 /* A subroutine of fold_convert_const handling conversions of an
    INTEGER_CST to another integer type.  */
 
 static tree
 fold_convert_const_int_from_int (tree type, const_tree arg1)
 {
-  /* Given an integer constant, make new constant with new type,
-     appropriately sign-extended or truncated.  Use widest_int
-     so that any extension is done according ARG1's type.  */
-  return force_fit_type (type, wi::to_widest (arg1),
-			 !POINTER_TYPE_P (TREE_TYPE (arg1)),
-			 TREE_OVERFLOW (arg1));
+  if (arg1->int_cst.offset_reference == NULL_TREE) 
+    {
+      /* Given an integer constant, make new constant with new type,
+            appropriately sign-extended or truncated.  Use widest_int
+            so that any extension is done according ARG1's type.  */
+      return force_fit_type (type, wi::to_widest (arg1),
+                        !POINTER_TYPE_P (TREE_TYPE (arg1)),
+                        TREE_OVERFLOW (arg1));
+    }
+  else
+    {
+      /* added by jian.hu, if arg1 is an integer_cst with offset reference tag,
+         always make new tree node, so don't call force_fit_type */
+      tree new_node = force_fit_type_no_share (type, wi::to_widest (arg1),
+                        !POINTER_TYPE_P (TREE_TYPE (arg1)),
+                        TREE_OVERFLOW (arg1));
+      /* and restore reference tag */
+      new_node->int_cst.offset_reference = arg1->int_cst.offset_reference;
+      return new_node;
+    }
 }
 
 /* A subroutine of fold_convert_const handling conversions a REAL_CST

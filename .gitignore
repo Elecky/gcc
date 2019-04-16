@@ -53,3 +53,4 @@ gmp*
 isl*
 mpc*
 mpfr*
+libjava/classpath/*
