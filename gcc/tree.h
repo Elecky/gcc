@@ -926,6 +926,8 @@ extern void omp_clause_range_check_failed (const_tree, const char *, int,
 #define TREE_INT_CST_ELT(NODE, I) TREE_INT_CST_ELT_CHECK (NODE, I)
 #define TREE_INT_CST_LOW(NODE) \
   ((unsigned HOST_WIDE_INT) TREE_INT_CST_ELT (NODE, 0))
+#define TREE_INT_CST_OFFSET_REFERENCE(NODE) \
+ (INTEGER_CST_CHECK (NODE)->int_cst.offset_reference)
 
 #define TREE_REAL_CST_PTR(NODE) (REAL_CST_CHECK (NODE)->real_cst.real_cst_ptr)
 #define TREE_REAL_CST(NODE) (*TREE_REAL_CST_PTR (NODE))

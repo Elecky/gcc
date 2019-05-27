@@ -697,11 +697,12 @@ forward_propagate_addr_expr_1 (tree name, tree def_rhs,
 {
   /* added by jian.hu, indicates whether def_rhs has patch directive tag */
   int has_patch_tag = 0;
+  if (TREE_OPERAND_LENGTH(TREE_OPERAND(def_rhs, 0)) >= 1)
   {
-  tree offset_node = TREE_OPERAND(TREE_OPERAND(def_rhs, 0), 1);
-  if (TREE_CODE(offset_node) == INTEGER_CST)
+    const_tree offset_node = TREE_OPERAND(TREE_OPERAND(def_rhs, 0), 1);
+    if (TREE_CODE(offset_node) == INTEGER_CST)
     {
-          has_patch_tag = offset_node->int_cst.offset_reference != NULL_TREE;
+      has_patch_tag = TREE_INT_CST_OFFSET_REFERENCE(offset_node) != NULL_TREE;
     }
 //     if (has_patch_tag) printf("met patch tag\n");
   }
