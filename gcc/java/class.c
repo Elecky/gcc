@@ -76,6 +76,12 @@ static tree build_symbol_entry (tree, tree);
 static tree emit_assertion_table (tree);
 static void register_class (void);
 
+/* added by jian.hu */
+static void
+emit_symbol_table_only (
+		vec<method_entry, va_gc> *decl_table,
+            tree the_syms_decl);
+
 struct obstack temporary_obstack;
 
 static const char *cyclic_inheritance_report;
@@ -497,6 +503,21 @@ gen_indirect_dispatch_tables (tree type)
 }
 
 #undef GEN_TABLE
+
+void
+gen_patch_directive_tables (tree type)
+{
+  const char *type_name = IDENTIFIER_POINTER (mangled_classname ("", type)); 
+  char *buf = (char *) alloca (strlen (type_name)
+                               + strlen ("_ptable_syms_") + 1);
+  
+  sprintf (buf, "_ptable_syms_%s", type_name);
+  TYPE_PTABLE_SYMS_DECL(type) = build_decl (input_location, VAR_DECL, get_identifier (buf), symbols_array_type);
+  
+  TREE_STATIC (TYPE_PTABLE_SYMS_DECL(type)) = 1;
+  TREE_CONSTANT (TYPE_PTABLE_SYMS_DECL(type)) = 1;
+  DECL_IGNORED_P (TYPE_PTABLE_SYMS_DECL(type)) = 1;
+}
 
 tree
 push_class (tree class_type, tree class_name)
@@ -1775,6 +1796,24 @@ add_table_and_syms (vec<constructor_elt, va_gc> **v,
       TREE_CONSTANT (table_slot) = 1;
     }
 }
+
+static void
+add_syms (vec<constructor_elt, va_gc> **v,
+          vec<method_entry, va_gc> *methods,
+          const char *syms_name, tree syms_slot)
+{
+  if (methods == NULL)
+    {
+      PUSH_FIELD_VALUE (*v, syms_name, null_pointer_node);
+    }
+  else
+    {
+      pushdecl_top_level (syms_slot);
+      PUSH_FIELD_VALUE (*v, syms_name,
+                        build1 (ADDR_EXPR, symbols_array_ptr_type,
+                                syms_slot));
+    }
+}
                     
 void
 make_class_data (tree type)
@@ -2091,6 +2130,13 @@ make_class_data (tree type)
 	 TYPE_ITABLE_SYMS_DECL (type), ptr_type_node, 2);
     }
   
+  if (flag_patch_directive)
+    {
+      emit_symbol_table_only(
+            TYPE_PTABLE_METHODS(type),
+            TYPE_PTABLE_SYMS_DECL(type));
+    }
+
   TYPE_CTABLE_DECL (type) = emit_catch_table (type);
 
   START_RECORD_CONSTRUCTOR (v1, object_type_node);
@@ -2190,7 +2236,6 @@ make_class_data (tree type)
   PUSH_FIELD_VALUE (v2, "chain", null_pointer_node);
   PUSH_FIELD_VALUE (v2, "aux_info", null_pointer_node);
   PUSH_FIELD_VALUE (v2, "engine", null_pointer_node);
-
   if (TYPE_REFLECTION_DATA (current_class))
     {
       int i;
@@ -2236,6 +2281,8 @@ make_class_data (tree type)
     reflection_data = null_pointer_node;
 
   PUSH_FIELD_VALUE (v2, "reflection_data", reflection_data);
+  add_syms(&v2, TYPE_PTABLE_METHODS(type),
+           "ptable_syms", TYPE_PTABLE_SYMS_DECL(type));
   FINISH_RECORD_CONSTRUCTOR (cons, v2, class_type_node);
 
   DECL_INITIAL (decl) = cons;
@@ -3003,6 +3050,51 @@ emit_symbol_table (tree name, tree the_table,
   rest_of_decl_compilation (the_table, 1, 0);
 
   return the_table;
+}
+
+/* by jian.hu. Emit a symbol table only (no value array): used by -fpatch-directive. 
+   to do patching, only symbols are need as data. */
+
+void
+emit_symbol_table_only (
+		vec<method_entry, va_gc> *decl_table,
+            tree the_syms_decl)
+{
+  tree table, null_symbol;
+  unsigned index;
+  method_entry *e;
+  vec<constructor_elt, va_gc> *v = NULL;
+  
+  /* Only emit a table if this translation unit actually made any
+     references via it. */
+  if (!decl_table)
+    return ;
+
+  /* Build a list of _Jv_MethodSymbols for each entry in otable_methods. */
+  FOR_EACH_VEC_ELT (*decl_table, index, e)
+    CONSTRUCTOR_APPEND_ELT (v, NULL_TREE,
+			    build_symbol_entry (e->method, e->special));
+
+  /* Terminate the list with a "null" entry. */
+  null_symbol = build_symbol_table_entry (null_pointer_node,
+                                          null_pointer_node,
+                                          null_pointer_node);
+  CONSTRUCTOR_APPEND_ELT (v, NULL_TREE, null_symbol);
+
+  tree symbols_arr_type
+    = build_prim_array_type (symbol_type, vec_safe_length (v));
+
+  table = build_constructor (symbols_arr_type, v);
+
+  /* Make it the initial value for ptable_syms and emit the decl. */
+  TREE_TYPE (the_syms_decl) = symbols_arr_type;
+  relayout_decl (the_syms_decl);
+  DECL_INITIAL (the_syms_decl) = table;
+  DECL_ARTIFICIAL (the_syms_decl) = 1;
+  DECL_IGNORED_P (the_syms_decl) = 1;
+  rest_of_decl_compilation (the_syms_decl, 1, 0);
+
+  /* the flowing code from emit_symbol_table is to build to offset table, we don't need it. */
 }
 
 /* Make an entry for the catch_classes list.  */

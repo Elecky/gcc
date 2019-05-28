@@ -873,6 +873,9 @@ struct GTY(()) lang_decl {
 #define TYPE_CTABLE_DECL(T)      (TYPE_LANG_SPECIFIC (T)->ctable_decl)
 #define TYPE_CATCH_CLASSES(T)    (TYPE_LANG_SPECIFIC (T)->catch_classes)
 
+#define TYPE_PTABLE_METHODS(T)   (TYPE_LANG_SPECIFIC (T)->ptable_methods)
+#define TYPE_PTABLE_SYMS_DECL(T) (TYPE_LANG_SPECIFIC (T)->ptable_syms_decl)
+
 #define TYPE_TO_RUNTIME_MAP(T)   (TYPE_LANG_SPECIFIC (T)->type_to_runtime_map)
 #define TYPE_ASSERTIONS(T)   	 (TYPE_LANG_SPECIFIC (T)->type_assertions)
 #define TYPE_PACKAGE(T)     	 (TYPE_LANG_SPECIFIC (T)->package)
@@ -908,6 +911,9 @@ struct GTY(()) lang_type {
 					   referred to by this class.  */
   tree itable_decl;		/* The interfaces table.  */
   tree itable_syms_decl;
+
+  vec<method_entry, va_gc> *ptable_methods; /* List of field/virtual method decls referred by this class, used only when flag_patch_directive = true  */
+  tree ptable_syms_decl;
 
   tree ctable_decl;             /* The table of classes for the runtime
 				   type matcher.  */

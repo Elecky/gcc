@@ -1565,9 +1565,16 @@ java_layout_seen_class_methods (void)
     }
 }
 
+void gen_patch_directive_tables (tree type);
+
+extern int (*search_ptable_index_func)(tree t, tree special, tree *decl_ret);
+int search_ptable_index(tree t, tree special, tree *decl_ret);
+
 static void
 parse_class_file (void)
 {
+  search_ptable_index_func = search_ptable_index;
+
   tree method;
   location_t save_location = input_location;
 
@@ -1586,6 +1593,7 @@ parse_class_file (void)
   java_mark_class_local (current_class);
 
   gen_indirect_dispatch_tables (current_class);
+  gen_patch_directive_tables (current_class);
 
   for (method = TYPE_METHODS (current_class);
        method != NULL_TREE; method = DECL_CHAIN (method))

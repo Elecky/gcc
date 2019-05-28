@@ -899,6 +899,9 @@ java_init_decl_processing (void)
   PUSH_FIELD (input_location, class_type_node, field, "engine", ptr_type_node);
   PUSH_FIELD (input_location,
 	      class_type_node, field, "reflection_data", ptr_type_node);
+  PUSH_FIELD (input_location,
+	      class_type_node, field, "ptable_syms", 
+  	      symbols_array_ptr_type);
   for (t = TYPE_FIELDS (class_type_node);  t != NULL_TREE;  t = DECL_CHAIN (t))
     FIELD_PRIVATE (t) = 1;
   push_super_field (class_type_node, object_type_node);

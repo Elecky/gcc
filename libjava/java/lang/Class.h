@@ -731,6 +731,8 @@ private:
   _Jv_ExecutionEngine *engine;
   // Reflection data.
   unsigned char *reflection_data;
+  // Patch reference symbol table.
+  _Jv_MethodSymbol *ptable_syms;
 };
 
 // Inline functions that are friends of java::lang::Class

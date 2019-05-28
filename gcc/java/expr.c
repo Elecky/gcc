@@ -58,6 +58,9 @@ The Free Software Foundation is independent of Sun Microsystems, Inc.  */
 #include "tree-iterator.h"
 #include "target.h"
 
+extern int (*search_ptable_index_func)(tree t, tree special, tree *decl_ret);
+int search_ptable_index(tree t, tree special, tree *decl_ret);
+
 static void flush_quick_stack (void);
 static void push_value (tree);
 static tree pop_value (tree);
@@ -1758,6 +1761,24 @@ build_field_ref (tree self_value, tree self_class, tree name)
 	  return fold_build1 (INDIRECT_REF, TREE_TYPE (field_decl), address);
 	}
 
+      if (! flag_syntax_only && flag_patch_directive)
+      {
+        self_value = build_java_indirect_ref (TREE_TYPE (TREE_TYPE (self_value)),
+					    self_value, check);
+        tree ref_node = fold_build3 (COMPONENT_REF, TREE_TYPE (field_decl),
+			      self_value, field_decl, NULL_TREE);
+        // do a search in PTABLE, making sure all symbols are created.
+        get_symbol_table_index 
+			     (field_decl, NULL_TREE, 
+			      &TYPE_PTABLE_METHODS (output_class));
+        // add the patch tag to 4th operand of COMPONENT_REF node.
+        // DO NOT use TREE_OPERAND becuase I did't change operand size of this node, only allocates space for one more tree.
+      //   ref_node->exp.operands[3] = build2 (PLUS_EXPR, integer_type_node,
+      //                                           TYPE_PTABLE_SYMS_DECL(output_class),
+      //                                           ptable_index);
+        return ref_node;
+      }
+
       self_value = build_java_indirect_ref (TREE_TYPE (TREE_TYPE (self_value)),
 					    self_value, check);
       return fold_build3 (COMPONENT_REF, TREE_TYPE (field_decl),
@@ -2315,6 +2336,26 @@ get_symbol_table_index (tree t, tree special,
   return i + 1;
 }
 
+int search_ptable_index(tree t, tree special, tree *decl_ret)
+{
+  if (decl_ret)
+  {
+    *decl_ret = TYPE_PTABLE_SYMS_DECL(output_class);
+  }
+
+  method_entry *e;
+  unsigned i;
+//   method_entry elem = {t, special};
+
+  FOR_EACH_VEC_SAFE_ELT (TYPE_PTABLE_METHODS(output_class), i, e)
+    if (t == e->method && special == e->special)
+    {
+      return i + 1;
+    }
+
+  return 0;
+}
+
 tree 
 build_invokevirtual (tree dtable, tree method, tree special)
 {
@@ -2323,6 +2364,8 @@ build_invokevirtual (tree dtable, tree method, tree special)
     = build_pointer_type (nativecode_ptr_type_node);
   tree method_index;
   tree otable_index;
+  /* indicate method index in patch directive table. */
+  tree ptable_index;
 
   if (flag_indirect_dispatch)
     {
@@ -2347,7 +2390,15 @@ build_invokevirtual (tree dtable, tree method, tree special)
       method_index = size_binop (MULT_EXPR, method_index,
                         size_int (TARGET_VTABLE_USES_DESCRIPTORS));
       gcc_assert(TREE_CODE(method_index) == INTEGER_CST);
-      INTEGER_CST_CHECK (method_index)->int_cst.offset_reference = method;
+
+      ptable_index = build_int_cst(
+                        NULL_TREE,
+                        get_symbol_table_index(method, special, &TYPE_PTABLE_METHODS(output_class)));
+
+      INTEGER_CST_CHECK (method_index)->int_cst.offset_reference = 
+                                          build2 (PLUS_EXPR, integer_type_node,
+                                                TYPE_PTABLE_SYMS_DECL(output_class),
+                                                ptable_index);
     }
   else
     {

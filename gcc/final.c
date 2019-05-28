@@ -3546,6 +3546,48 @@ output_asm_operand_names (rtx *operands, int *oporder, int nops)
     }
 }
 
+/* by jian.hu, this function pointer will be used to find PTABLE_INDEX of field referenced by COMPONENT_REF
+   , since it's too hard to carry this information with COMPONENT_REF node.
+   the reason I don't simply declare the functions is that, this module is a dependency of GCJ driver, so calling function
+   into java frontend is a reverse dependency. a UNREFERENCE SYMBOL ERROR will occur if directly declare function. */
+int (*search_ptable_index_func)(tree t, tree special, tree *decl_ret) = NULL;
+
+static void
+output_asm_mem_operand_decl (rtx *operands, int *oporder, int nops)
+{
+  int wrote = 0;
+  int i;
+
+  for (i = 0; i < nops; i++)
+    {
+      int addressp;
+      rtx op = operands[oporder[i]];
+      tree expr = get_mem_expr_from_op (op, &addressp);
+
+      fprintf (asm_out_file, "%c%s ",
+	       wrote ? ',' : '\t', wrote ? "" : ASM_COMMENT_START);
+      wrote = 1;
+      if (expr 
+          && (TREE_CODE(expr) == COMPONENT_REF || 
+              (TREE_CODE(expr) == MEM_REF && TREE_OPERAND_LENGTH(expr) >= 2
+               && TREE_CODE(TREE_OPERAND(expr, 1)) == INTEGER_CST && TREE_INT_CST_OFFSET_REFERENCE(TREE_OPERAND(expr, 1)) != NULL_TREE)))
+	{
+	  fprintf (asm_out_file, "%s",
+		   addressp ? "*" : "");
+	  print_mem_expr (asm_out_file, expr);
+        if (TREE_CODE(expr) == COMPONENT_REF && flag_patch_directive && search_ptable_index_func != NULL)
+        {
+          int ptable_index = search_ptable_index_func( TREE_OPERAND(expr, 1), NULL_TREE, NULL );
+          if (ptable_index != 0)
+          {
+            fprintf(asm_out_file, "{tag: %d}", ptable_index);
+          }
+        }
+	  wrote = 1;
+	}
+    }
+}
+
 #ifdef ASSEMBLER_DIALECT
 /* Helper function to parse assembler dialects in the asm string.
    This is called from output_asm_insn and asm_fprintf.  */
@@ -3683,6 +3725,8 @@ output_asm_insn (const char *templ, rtx *operands)
       case '\n':
 	if (flag_verbose_asm)
 	  output_asm_operand_names (operands, oporder, ops);
+      if (flag_patch_directive)
+        output_asm_mem_operand_decl(operands, oporder, ops);
 	if (flag_print_asm_name)
 	  output_asm_name ();
 
@@ -3814,6 +3858,9 @@ output_asm_insn (const char *templ, rtx *operands)
   /* Write out the variable names for operands, if we know them.  */
   if (flag_verbose_asm)
     output_asm_operand_names (operands, oporder, ops);
+  /* by jian.hu: output the MEM_EXPR information for operands, if we know them. */
+  if (flag_patch_directive)
+    output_asm_mem_operand_decl(operands, oporder, ops);
   if (flag_print_asm_name)
     output_asm_name ();
 
