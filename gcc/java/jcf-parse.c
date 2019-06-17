@@ -1570,10 +1570,18 @@ void gen_patch_directive_tables (tree type);
 extern int (*search_ptable_index_func)(tree t, tree special, tree *decl_ret);
 int search_ptable_index(tree t, tree special, tree *decl_ret);
 
+extern void (*get_symbol_entry_func) (tree decl, tree special, tree *clname, tree *name, tree *signature);
+void get_symbol_entry(tree decl, tree special, tree *clname, tree *name, tree *signature);
+
+extern int (*get_symbol_entry_by_id_func) (int id, tree *clname, tree *name, tree *signature);
+int get_symbol_entry_by_id (int id, tree *clname, tree *name, tree *signature);
+
 static void
 parse_class_file (void)
 {
   search_ptable_index_func = search_ptable_index;
+  get_symbol_entry_func = get_symbol_entry;
+  get_symbol_entry_by_id_func = get_symbol_entry_by_id;
 
   tree method;
   location_t save_location = input_location;

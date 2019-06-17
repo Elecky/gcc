@@ -349,6 +349,12 @@ public:
     pool->tags[index] = tags;
     _Jv_MutexUnlock (&resolve_mutex);
   }
+
+  /**!
+   * \brief look up offset for a method/field of a given class.
+   * \param class_name, name, signature: same as that in _Jv_MethodSymbol.
+  */
+  static int get_offset(_Jv_Utf8Const *class_name, _Jv_Utf8Const *name, _Jv_Utf8Const *signature);
 };
 
 /* Type of pointer used as finalizer.  */

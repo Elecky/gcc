@@ -2395,10 +2395,7 @@ build_invokevirtual (tree dtable, tree method, tree special)
                         NULL_TREE,
                         get_symbol_table_index(method, special, &TYPE_PTABLE_METHODS(output_class)));
 
-      INTEGER_CST_CHECK (method_index)->int_cst.offset_reference = 
-                                          build2 (PLUS_EXPR, integer_type_node,
-                                                TYPE_PTABLE_SYMS_DECL(output_class),
-                                                ptable_index);
+      INTEGER_CST_CHECK (method_index)->int_cst.offset_reference = ptable_index;
     }
   else
     {

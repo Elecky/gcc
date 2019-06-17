@@ -2994,6 +2994,45 @@ build_symbol_entry (tree decl, tree special)
   return build_symbol_table_entry (clname, name, signature);
 } 
 
+void get_symbol_entry (tree decl, tree special, tree *clname, tree *name, tree *signature)
+{
+  *clname = DECL_NAME (TYPE_NAME (DECL_CONTEXT (decl)));
+  /* ???  Constructors are given the name foo.foo all the way through
+     the compiler, but in the method table they're all renamed
+     foo.<init>.  So, we have to do the same here unless we want an
+     unresolved reference at runtime.  */
+  *name = (TREE_CODE (decl) == FUNCTION_DECL 
+			  && DECL_CONSTRUCTOR_P (decl))
+			 ? init_identifier_node
+			 : DECL_NAME (decl);
+  tree sig = build_java_signature (TREE_TYPE (decl));
+  *signature = unmangle_classname 
+			      (IDENTIFIER_POINTER (sig),
+			       IDENTIFIER_LENGTH (sig));
+  /* SPECIAL is either NULL_TREE or integer_one_node.  We emit
+     signature addr+1 if SPECIAL, and this indicates to the runtime
+     system that this is a "special" symbol, i.e. one that should
+     bypass access controls.  */
+  if (special != NULL_TREE)
+    *signature = fold_build_pointer_plus (*signature, special);
+} 
+
+int get_symbol_entry_by_id (int id, tree *clname, tree *name, tree *signature)
+{
+  method_entry *e;
+  unsigned i;
+//   method_entry elem = {t, special};
+
+  FOR_EACH_VEC_SAFE_ELT (TYPE_PTABLE_METHODS(output_class), i, e)
+    if (i + 1 == id)
+    {
+      get_symbol_entry(e->method, e->special, clname, name, signature);
+      return 1;
+    }
+
+  return 0;
+}
+
 /* Emit a symbol table: used by -findirect-dispatch.  */
 
 tree

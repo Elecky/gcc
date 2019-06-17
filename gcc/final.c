@@ -254,6 +254,21 @@ static int align_fuzz (rtx, rtx, int, unsigned);
 static void collect_fn_hard_reg_usage (void);
 static tree get_call_fndecl (rtx_insn *);
 
+/* by jian.hu, stores patch notes */
+struct patch_note
+{
+  tree clname, name, signature;
+};
+
+#define PATCH_NOTE_COUNT 500
+
+struct patch_note patch_notes[PATCH_NOTE_COUNT];
+int patch_note_idx;
+const char *cur_function;
+
+// static void
+// emit_patch_point_symbol (rtx *operands, int nops);
+
 /* Initialize data in final at the beginning of a compilation.  */
 
 void
@@ -3551,6 +3566,8 @@ output_asm_operand_names (rtx *operands, int *oporder, int nops)
    the reason I don't simply declare the functions is that, this module is a dependency of GCJ driver, so calling function
    into java frontend is a reverse dependency. a UNREFERENCE SYMBOL ERROR will occur if directly declare function. */
 int (*search_ptable_index_func)(tree t, tree special, tree *decl_ret) = NULL;
+void (*get_symbol_entry_func) (tree decl, tree special, tree *clname, tree *name, tree *signature) = NULL;
+int (*get_symbol_entry_by_id_func) (int id, tree *clname, tree *name, tree *signature) = NULL;
 
 static void
 output_asm_mem_operand_decl (rtx *operands, int *oporder, int nops)
@@ -3567,24 +3584,175 @@ output_asm_mem_operand_decl (rtx *operands, int *oporder, int nops)
       fprintf (asm_out_file, "%c%s ",
 	       wrote ? ',' : '\t', wrote ? "" : ASM_COMMENT_START);
       wrote = 1;
-      if (expr 
-          && (TREE_CODE(expr) == COMPONENT_REF || 
-              (TREE_CODE(expr) == MEM_REF && TREE_OPERAND_LENGTH(expr) >= 2
-               && TREE_CODE(TREE_OPERAND(expr, 1)) == INTEGER_CST && TREE_INT_CST_OFFSET_REFERENCE(TREE_OPERAND(expr, 1)) != NULL_TREE)))
-	{
-	  fprintf (asm_out_file, "%s",
-		   addressp ? "*" : "");
+
+      if (expr)
+      {
+        fprintf (asm_out_file, "%s",
+	  	   addressp ? "*" : "");
 	  print_mem_expr (asm_out_file, expr);
-        if (TREE_CODE(expr) == COMPONENT_REF && flag_patch_directive && search_ptable_index_func != NULL)
-        {
-          int ptable_index = search_ptable_index_func( TREE_OPERAND(expr, 1), NULL_TREE, NULL );
-          if (ptable_index != 0)
-          {
-            fprintf(asm_out_file, "{tag: %d}", ptable_index);
-          }
-        }
 	  wrote = 1;
+      }
+
+      if (expr && TREE_CODE(expr) == COMPONENT_REF && flag_patch_directive 
+            && get_symbol_entry_func != NULL && search_ptable_index_func != NULL)
+      {
+        /* only print tags for those field access created by put-field/get-field */
+        if (search_ptable_index_func(TREE_OPERAND(expr, 1), NULL_TREE, NULL) != 0)
+        {
+          tree clname, name, signature;
+          get_symbol_entry_func(TREE_OPERAND(expr, 1), NULL_TREE, &clname, &name, &signature);
+          /* print name. */
+          fprintf(asm_out_file, "{tag: ");
+          print_generic_expr (asm_out_file, CONST_CAST_TREE (clname), dump_flags);
+          fprintf(asm_out_file, ": ");
+          print_generic_expr (asm_out_file, CONST_CAST_TREE (name), dump_flags);
+          fprintf(asm_out_file, ": ");
+          print_generic_expr (asm_out_file, CONST_CAST_TREE (signature), dump_flags);
+          fprintf(asm_out_file, "}");
+        }
+      }
+
+      if (expr && (TREE_CODE(expr) == MEM_REF && TREE_OPERAND_LENGTH(expr) >= 2
+               && TREE_CODE(TREE_OPERAND(expr, 1)) == INTEGER_CST && TREE_INT_CST_OFFSET_REFERENCE(TREE_OPERAND(expr, 1)) != NULL_TREE))
+	{
+        tree clname, name, signature;
+        tree tag = TREE_INT_CST_OFFSET_REFERENCE(TREE_OPERAND(expr, 1));
+        int id = TREE_INT_CST_LOW(tag);
+        if (get_symbol_entry_by_id_func(id, &clname, &name, &signature)) 
+        {
+          /* print name. */
+          fprintf(asm_out_file, "{tag: ");
+          print_generic_expr (asm_out_file, CONST_CAST_TREE (clname), dump_flags);
+          fprintf(asm_out_file, ": ");
+          print_generic_expr (asm_out_file, CONST_CAST_TREE (name), dump_flags);
+          fprintf(asm_out_file, ": ");
+          print_generic_expr (asm_out_file, CONST_CAST_TREE (signature), dump_flags);
+          fprintf(asm_out_file, "}");
+        }
 	}
+    }
+}
+
+static void
+emit_patch_point_symbol (rtx *operands, const char * templ)
+{
+  /* first calculate the number of operands,
+     code copy and trimed from output_asm_insn. */
+  char opoutput[MAX_RECOG_OPERANDS];
+  int ops = 0;
+  const char *p;
+  int c;
+
+  if (*templ == 0)
+    return;
+
+  memset (opoutput, 0, sizeof opoutput);
+  p = templ;
+
+  while ((c = *p++))
+  {
+    if (c == '%')
+    {
+	if (*p == '%')
+	  {
+	    p++;
+        }
+	else if (*p == '=')
+	  {
+	    p++;
+	  }
+	/* % followed by a letter and some digits
+	   outputs an operand in a special way depending on the letter.
+	   Letters `acln' are implemented directly.
+	   Other letters are passed to `output_operand' so that
+	   the TARGET_PRINT_OPERAND hook can define them.  */
+	else if (ISALPHA (*p))
+	  {
+	    int letter = *p++;
+	    unsigned long opnum;
+	    char *endptr;
+
+	    opnum = strtoul (p, &endptr, 10);
+
+	    if (endptr == p)
+	      output_operand_lossage ("operand number missing "
+				      "after %%-letter");
+
+	    if (!opoutput[opnum])
+	      ++ops;
+	    opoutput[opnum] = 1;
+
+	    p = endptr;
+	    c = *p;
+	  }
+	/* % followed by a digit outputs an operand the default way.  */
+	else if (ISDIGIT (*p))
+	  {
+	    unsigned long opnum;
+	    char *endptr;
+
+	    opnum = strtoul (p, &endptr, 10);
+
+	    if (!opoutput[opnum])
+	      ++ops;
+	    opoutput[opnum] = 1;
+
+	    p = endptr;
+	    c = *p;
+	  }
+	/* % followed by punctuation: output something for that
+	   punctuation character alone, with no operand.  The
+	   TARGET_PRINT_OPERAND hook decides what is actually done.  */
+	else if (targetm.asm_out.print_operand_punct_valid_p ((unsigned char) *p))
+	  p++;
+      }
+  }
+
+  int i;
+//   printf("nops = %d\n", ops);
+  for (i = 0; i < ops; i++)
+    {
+      int addressp;
+      rtx op = operands[i];
+      tree expr = get_mem_expr_from_op (op, &addressp);
+      int flag = 0;
+
+      tree clname, name, signature;
+
+      if (expr && TREE_CODE(expr) == COMPONENT_REF && flag_patch_directive 
+            && get_symbol_entry_func != NULL && search_ptable_index_func != NULL)
+      {
+        /* only print tags for those field access created by put-field/get-field */
+        if (search_ptable_index_func(TREE_OPERAND(expr, 1), NULL_TREE, NULL) != 0)
+        {
+          tree clname, name, signature;
+          get_symbol_entry_func(TREE_OPERAND(expr, 1), NULL_TREE, &clname, &name, &signature);
+          flag = 1;
+        }
+      }
+
+      if (expr && (TREE_CODE(expr) == MEM_REF && TREE_OPERAND_LENGTH(expr) >= 2
+               && TREE_CODE(TREE_OPERAND(expr, 1)) == INTEGER_CST && TREE_INT_CST_OFFSET_REFERENCE(TREE_OPERAND(expr, 1)) != NULL_TREE))
+	{
+        tree tag = TREE_INT_CST_OFFSET_REFERENCE(TREE_OPERAND(expr, 1));
+        int id = TREE_INT_CST_LOW(tag);
+        if (get_symbol_entry_by_id_func(id, &clname, &name, &signature)) 
+        {
+          flag = 1;
+        }
+	}
+
+      if (flag)
+      {
+        /* print patch point symbol first. */
+        fprintf(asm_out_file, "\t.set\tpatch_point%d, .-%s\n", patch_note_idx, cur_function);
+        gcc_assert(patch_note_idx < PATCH_NOTE_COUNT);
+        patch_notes[patch_note_idx].clname = clname;
+        patch_notes[patch_note_idx].name = name;
+        patch_notes[patch_note_idx].signature = signature;
+        ++patch_note_idx;
+        return;
+      }
     }
 }
 
@@ -3697,6 +3865,10 @@ do_assembler_dialects (const char *p, int *dialect)
 void
 output_asm_insn (const char *templ, rtx *operands)
 {
+  /* by jian.hu, first print patch-point symbol. */
+  if (flag_patch_directive)
+      emit_patch_point_symbol(operands, templ);
+
   const char *p;
   int c;
 #ifdef ASSEMBLER_DIALECT
@@ -4528,7 +4700,10 @@ leaf_renumber_regs_insn (rtx in_rtx)
 static unsigned int
 rest_of_handle_final (void)
 {
+  patch_note_idx = 0;
+
   const char *fnname = get_fnname_from_decl (current_function_decl);
+  cur_function = fnname;
 
   assemble_start_function (current_function_decl, fnname);
   final_start_function (get_insns (), asm_out_file, optimize);
@@ -4581,6 +4756,23 @@ rest_of_handle_final (void)
     targetm.asm_out.destructor (XEXP (DECL_RTL (current_function_decl), 0),
 				decl_fini_priority_lookup
 				  (current_function_decl));
+  
+  /* by jian.hu, maybe output patch_note section at here? */
+  fprintf(asm_out_file, "\t.section patch_note\n");
+  for (int idx = 0; idx < patch_note_idx; ++idx)
+  {
+    fprintf(asm_out_file, "\t.asciz\t\"%s\"\n", fnname);
+    fprintf(asm_out_file, "\t.asciz\t\"");
+    print_generic_expr (asm_out_file, CONST_CAST_TREE (patch_notes[idx].clname), dump_flags);
+    putc(' ', asm_out_file);
+    print_generic_expr (asm_out_file, CONST_CAST_TREE (patch_notes[idx].name), dump_flags);
+    putc(' ', asm_out_file);
+    print_generic_expr (asm_out_file, CONST_CAST_TREE (patch_notes[idx].signature), dump_flags);
+    fprintf(asm_out_file, "\"\n");
+    fprintf(asm_out_file, "\t.balign\t4\n");
+    fprintf(asm_out_file, "\t.int\tpatch_point%d\n", idx);
+  }
+  in_section = NULL;
   return 0;
 }
 

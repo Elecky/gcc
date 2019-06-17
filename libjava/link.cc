@@ -2103,3 +2103,106 @@ _Jv_Linker::wait_for_state (jclass klass, int state)
     }
 #endif
 }
+
+int _Jv_Linker::get_offset(
+      _Jv_Utf8Const *class_name, _Jv_Utf8Const *name, _Jv_Utf8Const *signature)
+{
+      /* VMClass::getSystemClassLoader can only be called once, so use java::lang::ClassLoader::getSystemClassLoader!!! */
+      java::lang::ClassLoader *class_loader = java::lang::ClassLoader::getSystemClassLoader();
+      jclass target_class = _Jv_FindClass (class_name, class_loader);
+      /* FIXME: here we set klass = target_class, this bypasses any access check! */
+      jclass klass = target_class;
+      _Jv_Method *meth = NULL;
+
+      uaddr special;
+      maybe_adjust_signature (signature, special);
+
+      if (target_class == NULL)
+        throw new java::lang::NoClassDefFoundError 
+            (_Jv_NewStringUTF (class_name->chars()));
+
+      // We're looking for a field or a method, and we can tell
+      // which is needed by looking at the signature.
+      if (signature->first() == '(' && signature->len() >= 2)
+	{
+	  // Looks like someone is trying to invoke an interface method
+	  if (target_class->isInterface())
+	    {
+	      using namespace java::lang;
+	      StringBuffer *sb = new StringBuffer();
+	      sb->append(JvNewStringLatin1("found interface "));
+	      sb->append(target_class->getName());
+	      sb->append(JvNewStringLatin1(" when searching for a class"));
+	      throw new VerifyError(sb->toString());
+	    }
+
+ 	  // If the target class does not have a vtable_method_count yet, 
+	  // then we can't tell the offsets for its methods, so we must lay 
+	  // it out now.
+	  wait_for_state(target_class, JV_STATE_PREPARED);
+
+	  try
+	    {
+	      meth = (search_method_in_superclasses 
+		      (target_class, klass, name, signature, 
+		       NULL, special == 0));
+	    }
+	  catch (::java::lang::IllegalAccessError *e)
+	    {
+	    }
+
+	  // Every class has a throwNoSuchMethodErrorIndex method that
+	  // it inherits from java.lang.Object.  Find its vtable
+	  // offset.
+	  static int throwNoSuchMethodErrorIndex;
+	  if (throwNoSuchMethodErrorIndex == 0)
+	    {
+	      Utf8Const* name 
+		= _Jv_makeUtf8Const ("throwNoSuchMethodError", 
+				     strlen ("throwNoSuchMethodError"));
+	      _Jv_Method* meth
+		= _Jv_LookupDeclaredMethod (&java::lang::Object::class$, 
+					    name, gcj::void_signature);
+	      throwNoSuchMethodErrorIndex 
+		= _Jv_VTable::idx_to_offset (meth->index);
+	    }
+	  
+	  // If we don't find a nonstatic method, insert the
+	  // vtable index of Object.throwNoSuchMethodError().
+	  // This defers the missing method error until an attempt
+	  // is made to execute it.	  
+        int offset;
+
+	  {  
+	    if (meth != NULL)
+	      offset = _Jv_VTable::idx_to_offset (meth->index);
+	    else
+	      offset = throwNoSuchMethodErrorIndex;		    
+	    
+	    if (offset == -1)
+	      JvFail ("Bad method index");
+	    JvAssert (meth->index < target_class->vtable_method_count);
+	    
+	//     klass->otable->offsets[index] = offset;
+	  }
+
+	  if (debug_link)
+	    {}  /* do nothing */
+	  return offset;
+	}
+      else
+      // Try fields.
+      {
+	  wait_for_state(target_class, JV_STATE_PREPARED);
+	  jclass found_class;
+	  _Jv_Field *the_field = NULL;
+	  the_field = find_field(klass, target_class, &found_class,
+	  	                  name, signature);
+	  if ((the_field->flags & java::lang::reflect::Modifier::STATIC))
+	    throw new java::lang::IncompatibleClassChangeError;
+	  else
+	    return the_field->u.boffset;
+      }
+      
+      return -1;
+}

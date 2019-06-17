@@ -1435,12 +1435,12 @@ dump_generic_node (pretty_printer *pp, tree node, int spc, int flags,
 	  print_hex (val, pp_buffer (pp)->digit_buffer);
 	  pp_string (pp, pp_buffer (pp)->digit_buffer);
 	}
-      if (node->int_cst.offset_reference != NULL_TREE)
-      {
-        pp_left_bracket(pp);
-        dump_generic_node (pp, node->int_cst.offset_reference, spc, flags, false);
-        pp_right_bracket(pp);
-      }
+      // if (node->int_cst.offset_reference != NULL_TREE)
+      // {
+      //   pp_left_bracket(pp);
+      //   dump_generic_node (pp, node->int_cst.offset_reference, spc, flags, false);
+      //   pp_right_bracket(pp);
+      // }
       if (TREE_OVERFLOW (node))
 	pp_string (pp, "(OVF)");
       break;
