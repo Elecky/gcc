@@ -2036,3 +2036,512 @@ _Jv_PrependVersionedLibdir (char* libpath)
 
   return retval;
 }
+
+/* by jian.hu.
+ * The following code are related to patching!!
+ */
+
+void RunPatch(const char *name);
+
+void
+_Jv_RunPatch (JvVMInitArgs *vm_args, const char *name)
+{
+  java::lang::Runtime *runtime = NULL;
+
+  try
+    {
+      if (_Jv_CreateJavaVM (vm_args) < 0)
+	{
+	  fprintf (stderr, "libgcj: couldn't create virtual machine\n");
+	  exit (1);
+	}
+      
+      if (vm_args == NULL)
+	  gcj::vmArgs = JvConvertArgv(0, NULL);
+      else
+	{
+	  const char* vmArgs[vm_args->nOptions];
+	  const char** vmPtr = vmArgs;
+	  struct _Jv_VMOption* optionPtr = vm_args->options;
+	  for (int i = 0; i < vm_args->nOptions; ++i)
+	    *vmPtr++ = (*optionPtr++).optionString;
+	  gcj::vmArgs = JvConvertArgv(vm_args->nOptions, vmArgs);
+	}
+
+      // Get the Runtime here.  We want to initialize it before searching
+      // for `main'; that way it will be set up if `main' is a JNI method.
+      runtime = java::lang::Runtime::getRuntime ();
+
+      using namespace gnu::java::lang;
+
+#ifdef INTERPRETER
+      // Start JVMTI if an agent function has been found.
+      if (jvmti_agentonload)
+        (*jvmti_agentonload) (_Jv_GetJavaVM (), jvmti_agent_opts, NULL);
+
+      // Start JDWP
+      if (remoteDebug)
+	{
+	  using namespace gnu::classpath::jdwp;
+	  VMVirtualMachine::initialize ();
+	  Jdwp *jdwp = new Jdwp ();
+	  jdwp->setDaemon (true);	  
+	  jdwp->configure (JvNewStringLatin1 (jdwpOptions));
+	  jdwp->start ();
+
+	  // Wait for JDWP to initialize and start
+	  jdwp->join ();
+	}
+      // Send VMInit
+      if (JVMTI_REQUESTED_EVENT (VMInit))
+	_Jv_JVMTI_PostEvent (JVMTI_EVENT_VM_INIT, main_thread);
+#endif // INTERPRETER
+    }
+  catch (java::lang::Throwable *t)
+    {
+      java::lang::System::err->println (JvNewStringLatin1 
+        ("Exception during runtime initialization"));
+      t->printStackTrace();
+      if (runtime)
+	java::lang::Runtime::exitNoChecksAccessor (1);
+      // In case the runtime creation failed.
+      ::exit (1);
+    }
+  
+  RunPatch(name);
+
+#ifdef INTERPRETER
+  // Send VMDeath
+  if (JVMTI_REQUESTED_EVENT (VMDeath))
+    {
+      java::lang::Thread *thread = java::lang::Thread::currentThread ();
+      JNIEnv *jni_env = _Jv_GetCurrentJNIEnv ();
+      _Jv_JVMTI_PostEvent (JVMTI_EVENT_VM_DEATH, thread, jni_env);
+    }
+
+  // Run JVMTI AgentOnUnload if it exists and an agent is loaded.
+  if (jvmti_agentonunload)
+    (*jvmti_agentonunload) (_Jv_GetJavaVM ());
+#endif // INTERPRETER
+
+  // If we got here then something went wrong, as MainThread is not
+  // supposed to terminate.
+  ::exit (1);
+}
+
+const char * next_blank(const char *p)
+{
+  while (*p != '\0' && *p != ' ')
+  {
+    ++p;
+  }
+  return p;
+}
+
+#define HAVE_MMAP
+#define HAVE_FCNTL_H
+#define HAVE_STAT
+
+#if defined(HAVE_MMAP) && defined(HAVE_FCNTL_H) && defined(HAVE_STAT)
+#include <sys/mman.h>
+#include <elf.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <fcntl.h>
+#include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <stdint.h>
+
+void GenPatchOut(const char *src, const char *dst)
+{
+  int src_fd = open(src, O_RDWR);
+  int dst_fd = open(dst, O_RDWR | O_CREAT);
+  char buffer[1024];
+  int len;
+  while ((len = read(src_fd, buffer, 1024)))
+  {
+    write(dst_fd, buffer, len);
+  }
+  close(src_fd);
+  close(dst_fd);
+}
+
+namespace elf_patcher
+{
+
+typedef char const * c_str_t;
+
+struct section_t {
+    section_t() : section_index(0) {}
+    int section_index; 
+    intptr_t section_offset, section_addr;
+    c_str_t section_name;
+    c_str_t section_type; 
+    int section_size, section_ent_size, section_addr_align;
+};
+
+struct segment_t {
+    c_str_t segment_type, *segment_flags;
+    long segment_offset, segment_virtaddr, segment_physaddr, segment_filesize, segment_memsize;
+    int segment_align;
+};
+
+struct symbol_t {
+    symbol_t() : symbol_num(0), symbol_size(0) {}
+    c_str_t symbol_index;
+    intptr_t symbol_value;
+    int symbol_num, symbol_size;
+    c_str_t symbol_type, symbol_bind, symbol_visibility, symbol_name, symbol_section;      
+};
+
+typedef struct {
+    intptr_t relocation_offset, relocation_info, relocation_symbol_value;
+    c_str_t relocation_type, relocation_symbol_name, relocation_section_name;
+    intptr_t relocation_plt_address;
+} relocation_t;
+
+
+class Elf_patcher {
+public:
+      Elf_patcher (const char * program_path): m_program_path(program_path) {   
+            load_memory_map();
+      }
+      
+      uint8_t *get_memory_map() {
+            return m_mmap_program;
+      }
+
+      void do_patch();
+
+      const Elf64_Shdr * get_section(c_str_t section_name);
+
+      const Elf64_Sym * get_symbol(c_str_t sym_name);
+
+      // uint8_t *get_symbol_
+        
+    private:
+      void load_memory_map();
+
+      void patch_insn(uint8_t *insn, int true_offset);
+
+      const char * get_section_type(int tt);
+
+      const char * get_segment_type(uint32_t &seg_type);
+      const char * get_segment_flags(uint32_t &seg_flags);
+
+      const char * get_symbol_type(uint8_t &sym_type);
+      const char * get_symbol_bind(uint8_t &sym_bind);
+      const char * get_symbol_visibility(uint8_t &sym_vis);
+      const char * get_symbol_index(uint16_t &sym_idx);
+
+      const char * get_relocation_type(uint64_t &rela_type);
+      //   intptr_t get_rel_symbol_value(uint64_t &sym_idx, std::vector<symbol_t> &syms);
+      //   const char * get_rel_symbol_name(
+      //       uint64_t &sym_idx, std::vector<symbol_t> &syms);
+
+      const char * m_program_path; 
+      uint8_t *m_mmap_program;
+};
+
+void Elf_patcher::load_memory_map()
+{
+      int fd;
+      struct stat st;
+
+      if ((fd = open(m_program_path, O_RDWR)) < 0) {
+            printf("Err: open\n");
+            exit(-1);
+      }
+      if (fstat(fd, &st) < 0) {
+            printf("Err: fstat\n");
+            exit(-1);
+      }
+      m_mmap_program = static_cast<uint8_t*>(mmap(NULL, st.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0));
+      if (m_mmap_program == MAP_FAILED) {
+            printf("Err: mmap\n");
+            exit(-1);
+      }
+
+      Elf64_Ehdr *header = (Elf64_Ehdr*)m_mmap_program;
+      if (header->e_ident[EI_CLASS] != ELFCLASS64) {
+            printf("Only 64-bit files supported\n");
+            exit(1);
+      }
+}
+
+const Elf64_Shdr * Elf_patcher::get_section(c_str_t name)
+{
+      const Elf64_Ehdr *ehdr = (Elf64_Ehdr*)m_mmap_program;
+      const Elf64_Shdr *shdr = (Elf64_Shdr*)(m_mmap_program + ehdr->e_shoff);
+      int shnum = ehdr->e_shnum;
+
+      const Elf64_Shdr *sh_strtab = &shdr[ehdr->e_shstrndx];
+      const char *const sh_strtab_p = (char*)m_mmap_program + sh_strtab->sh_offset;
+
+      for (int i = 0; i < shnum; ++i) 
+      {
+            c_str_t sh_name = sh_strtab_p + shdr[i].sh_name;
+            if (strcmp(sh_name, name) == 0) {
+                  return &shdr[i];
+            }
+      }
+      return NULL;
+}
+
+const Elf64_Sym * Elf_patcher::get_symbol(c_str_t sym_name)
+{
+      // get headers for offsets
+      const Elf64_Ehdr *ehdr = (Elf64_Ehdr*)m_mmap_program;
+      const Elf64_Shdr *shdr = (Elf64_Shdr*)(m_mmap_program + ehdr->e_shoff);
+
+      c_str_t sh_strtab_p = reinterpret_cast<c_str_t>(m_mmap_program) + get_section(".strtab")->sh_offset;
+      c_str_t sh_dynstr_p = NULL;
+      {
+            const Elf64_Shdr *sh_dynstr = get_section(".dynstr");
+            if (sh_dynstr != NULL)
+                  sh_dynstr_p = reinterpret_cast<c_str_t>(m_mmap_program + sh_dynstr->sh_offset);
+      }
+
+      /* iterative throught all sections, and try to find symbol in SHT_SYMTAB and SHT_DYNSYM */
+      int shnum = ehdr->e_shnum;
+      for (int i = 0; i < shnum; ++i)
+      {
+            const Elf64_Shdr &sec = shdr[i];
+            int sh_type = sec.sh_type;
+            if (sh_type != SHT_SYMTAB /*SHT_SYMTAB*/ && sh_type != SHT_DYNSYM /*SHT_DYNSYM*/)
+                  continue;
+            
+            unsigned total_syms = sec.sh_size / sizeof(Elf64_Sym);
+            const Elf64_Sym *syms_data = reinterpret_cast<Elf64_Sym*>(m_mmap_program + sec.sh_offset);
+
+            for (unsigned idx = 0; idx < total_syms; ++idx) 
+            {
+                  if (sec.sh_type == 2 && strcmp(sh_strtab_p + syms_data[idx].st_name, sym_name) == 0)
+                        return &syms_data[idx];
+                  if (sec.sh_type == 11 && sh_dynstr_p != NULL && strcmp(sh_dynstr_p + syms_data[idx].st_name, sym_name) == 0)
+                        return &syms_data[idx];
+            }
+      }
+      return NULL;
+}
+
+void Elf_patcher::patch_insn(uint8_t *insn_p, int real_disp)
+{
+      /* 1. find the displacement position, and its size. */
+      /* pointers to different parts */
+      uint8_t *disp_p = NULL, *ModRM_p = NULL, *SIB_p = NULL, *REX_p = NULL;
+      int disp_size_log = 0;
+      /* this is actually deassembling, since x86 is so complex, there may be many conditions left out. */
+      /* here we simply assume there is no legay prefix, so insn_p points to the opcode or REX prefix */
+      if ((*insn_p & 0xf0) == 0x40)
+      {
+            REX_p = insn_p;
+            ++insn_p;
+      }
+      /* now insn_p points to begin of opcode */
+      switch (static_cast<unsigned>(*insn_p))
+      {
+      case 0xff:  /* CALL */
+      /* lots of MOVs */
+      case 0x88:
+      case 0x89:
+      case 0x8a:
+      case 0x8b:
+      case 0x8c:
+      case 0x8e:
+      case 0xc6:
+      case 0xc7:  /* MOVE imm{16/32} to r/m{16/32} */
+            ModRM_p = insn_p + 1;
+            break;
+      
+      default:
+            break;
+      }
+
+      if (ModRM_p == NULL)
+      {
+            fprintf(stdout, "ModR/M not found for instruction with opcode[0] = %x\n", static_cast<unsigned>(*insn_p));
+            return;
+      }
+      /* now according to ModR/M, calc the pointer to SIB, Disp and its size. */
+      unsigned ModRM = *ModRM_p;
+      unsigned Mod = ModRM >> 6, RM = ModRM & 0x7;
+      if (Mod == 0x0)
+      {
+            if (RM == 0x4)
+                  SIB_p = ModRM_p + 1;
+            else if (RM == 0x5)
+            {
+                  /* 32bit displacement */
+                  disp_p = ModRM_p + 1;
+                  disp_size_log = 2;
+            }
+      }
+      else if (Mod == 0x1)
+      {
+            if (RM == 0x4)
+            {
+                  SIB_p = ModRM_p + 1;
+                  disp_p = SIB_p + 1;
+            }
+            else
+            {
+                  disp_p = ModRM_p + 1;
+            }
+            disp_size_log = 0;
+      }
+      else if (Mod == 0x2)
+      {
+            if (RM == 0x4)
+            {
+                  SIB_p = ModRM_p + 1;
+                  disp_p = SIB_p + 1;
+            }
+            else
+            {
+                  disp_p = ModRM_p + 1;
+            }
+            disp_size_log = 2;
+      }
+      /* now, if SIB exists, calc the disp_p */
+      if (SIB_p != NULL)
+      {
+            if (Mod == 0x0)
+            {
+                  disp_p = SIB_p + 1;
+                  disp_size_log = 2;
+            }
+      }
+
+      if (disp_p == NULL)
+      {
+            fprintf(stdout, "can't find displacement for instruction with opcode[0] = %x\n", static_cast<unsigned>(*insn_p));
+            return;
+      }
+      /* now we should have got the position of displacement and its length */
+      switch (disp_size_log)
+      {
+      case 0:  /* 1-bit displacement */
+            fprintf(stdout, "original displacement = %x[B]\n", static_cast<unsigned>(*disp_p));
+            *disp_p = static_cast<uint8_t>(real_disp);
+            break;
+      case 1:  /* 2-bit displacement */
+            fprintf(stdout, "original displacement = %x[W]\n", *reinterpret_cast<uint16_t*>(disp_p));
+            *reinterpret_cast<uint16_t*>(disp_p) = static_cast<uint16_t>(real_disp);
+            break;
+      case 2:  /* 4-bit displacement */
+            fprintf(stdout, "original displacement = %x[D]\n", *reinterpret_cast<uint32_t*>(disp_p));
+            *reinterpret_cast<uint32_t*>(disp_p) = static_cast<uint32_t>(real_disp);
+            break;
+      default:
+            fprintf(stdout, "unhandled displacement size %d\n", 1 << disp_size_log);
+            break;
+      }
+}
+
+void Elf_patcher::do_patch()
+{
+      // header of elf and section table
+      const Elf64_Ehdr *ehdr = (Elf64_Ehdr*)m_mmap_program;
+      const Elf64_Shdr *shdr = (Elf64_Shdr*)(m_mmap_program + ehdr->e_shoff);
+
+      const Elf64_Half elf_type = ehdr->e_type;
+
+      /* first find the patch_note section */
+      const c_str_t patch_note_sh_name = "patch_note";
+      const Elf64_Shdr *note_section_hdr = get_section(patch_note_sh_name);
+      if (note_section_hdr != NULL)
+      {
+            fprintf(stdout, "section found, length = %d\n", note_section_hdr->sh_size);
+      }
+
+      uint8_t *head = static_cast<uint8_t*>(m_mmap_program + note_section_hdr->sh_offset);
+      uint8_t *ptr = head, *end = head + note_section_hdr->sh_size;
+      while (ptr < end)
+      {
+            /* the symbol of function to which the patch point belong */
+            c_str_t sym = reinterpret_cast<c_str_t>(ptr);
+            /* the reference target */
+            c_str_t ref = sym + strlen(sym) + 1;
+            /* the offset of the patch point relative to function start */
+            intptr_t offset_p = reinterpret_cast<intptr_t>(ref + strlen(ref) + 1);
+            // align to 4.
+            if ((offset_p & 0x3) != 0)
+                  offset_p = (offset_p & ~0x3) + 4;
+            int32_t offset = *reinterpret_cast<int32_t*>(offset_p);
+            fprintf(stdout, "%s %d %s ", sym, offset, ref);
+
+            ptr = reinterpret_cast<uint8_t*>(offset_p + sizeof(int32_t));
+            
+            /* calc new offset */
+            const char *p = ref, *next;
+            next = next_blank(p);
+            _Jv_Utf8Const *sym_class_name = _Jv_makeUtf8Const(p, next - p);
+
+            p = next + 1;
+            next = next_blank(p);
+            _Jv_Utf8Const *sym_name = _Jv_makeUtf8Const(p, next - p);
+
+            p = next + 1;
+            next = next_blank(p);
+            _Jv_Utf8Const *sym_signature = _Jv_makeUtf8Const(p, next - p);
+            int real_disp = _Jv_Linker::get_offset(sym_class_name, sym_name, sym_signature);
+            fprintf(stdout, "%d\n", real_disp);
+
+            /* the the function symbol */
+            const Elf64_Sym *func_sym = get_symbol(sym);
+            if (func_sym != NULL)
+            fprintf(stdout, "st_value = %d, ", func_sym->st_value);
+
+            // TODO: some checks need to be done.
+            /* the instruction to be patched */
+            // TODO: for .so/.exe files, the st_value is not offset relative to section head. 
+            uint8_t *insn_p;
+            if (elf_type == ET_REL)
+                  /* the st_value of symbol in relocatable file is offset relative to section head. */
+                  insn_p = m_mmap_program + shdr[func_sym->st_shndx].sh_offset + func_sym->st_value + offset;
+            else if (elf_type == ET_EXEC || elf_type == ET_DYN)
+                  /* st_value in executable file or shared object file is the virtual address of symbol when loaded, 
+                     so we subtract it by address of it's section. */
+                  insn_p = m_mmap_program + shdr[func_sym->st_shndx].sh_offset
+                              + (func_sym->st_value - shdr[func_sym->st_shndx].sh_addr) + offset;
+            else 
+            {
+                  fprintf(stdout, "unhandled elf_type %d\n", elf_type);
+                  break;
+            }
+
+            fprintf(stdout, "*insn_p = %x\n", static_cast<unsigned>(*insn_p));
+
+            patch_insn(insn_p, real_disp);
+      }
+}
+
+}  // namespace elf_patcher
+
+void RunPatch(const char *name)
+{
+  const char *src = name;
+  char *dst = static_cast<char *>(malloc((strlen(src) + strlen(".patched") + 1) * sizeof(char)));
+  strcpy(dst, src);
+  strcat(dst, ".patched");
+  fprintf(stdout, "creating outfile %s\n", dst);
+  
+  GenPatchOut(src, dst);
+
+  using elf_patcher::Elf_patcher;
+  Elf_patcher patcher(dst);
+  patcher.do_patch();
+
+  free(dst);
+}
+
+#else
+
+void RunPatch(const char *name)
+{
+  fprintf(stdout, "some library not found, can't do patching");
+}
+
+#endif

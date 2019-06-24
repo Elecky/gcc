@@ -15,6 +15,8 @@
 #include <string.h>
 #include <stdlib.h>
 
+void _Jv_RunPatch (JvVMInitArgs *vm_args, const char *name);
+
 static void
 help ()
 {
@@ -89,6 +91,8 @@ main (int argc, char const** argv)
       sprintf (darg, "-Djava.class.path=%s", classpath);
       add_option (vm_args, darg, NULL);
     }
+  
+  const char *patch_file = NULL;
 
   // Handle arguments to the java command.  Store in vm_args arguments
   // handled by the invocation API.
@@ -301,6 +305,10 @@ main (int argc, char const** argv)
         {
 	  gcj::verifyClasses = false;
 	}
+      else if (! strcmp(arg, "-patch"))
+      {
+        patch_file = argv[++i];
+      }
       else
 	{
 	  fprintf (stderr, "gij: unrecognized option -- `%s'\n", argv[i]);
@@ -309,7 +317,7 @@ main (int argc, char const** argv)
 	}
     }
 
-  if (argc - i < 1)
+  if (argc - i < 1 && !patch_file)  // modified by jian.hu, when doing patch, no Main class is spefified.
     {
       fprintf (stderr, "Usage: gij [OPTION] ... CLASS [ARGS] ...\n");
       fprintf (stderr, "          to invoke CLASS.main, or\n");
@@ -328,7 +336,10 @@ main (int argc, char const** argv)
       sprintf (darg, "-Djava.class.path=%s", argv[i]);
       add_option (vm_args, darg, NULL);
     }
-
-  _Jv_RunMain (&vm_args, NULL, argv[i], argc - i,
-               (char const**) (argv + i), jar_mode);
+  
+  if (!patch_file)
+    _Jv_RunMain (&vm_args, NULL, argv[i], argc - i,
+                 (char const**) (argv + i), jar_mode);
+  else
+    _Jv_RunPatch (&vm_args, patch_file);
 }
