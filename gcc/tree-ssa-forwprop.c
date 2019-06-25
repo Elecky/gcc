@@ -704,7 +704,7 @@ forward_propagate_addr_expr_1 (tree name, tree def_rhs,
     {
       has_patch_tag = TREE_INT_CST_OFFSET_REFERENCE(offset_node) != NULL_TREE;
     }
-//     if (has_patch_tag) printf("met patch tag\n");
+//     if (has_patch_tag) printf("met patch tag %d\n", (int)TREE_INT_CST_OFFSET_REFERENCE(offset_node)->int_cst.val[0]);
   }
 
   tree lhs, rhs, rhs2, array_ref;
@@ -814,23 +814,39 @@ forward_propagate_addr_expr_1 (tree name, tree def_rhs,
       if ((def_rhs_base = get_addr_base_and_unit_offset (TREE_OPERAND (def_rhs, 0),
 							 &def_rhs_offset)))
 	{
-	  offset_int off = mem_ref_offset (lhs);
-	  tree new_ptr;
-	  off += def_rhs_offset;
-	  if (TREE_CODE (def_rhs_base) == MEM_REF)
-	    {
-	      off += mem_ref_offset (def_rhs_base);
-	      new_ptr = TREE_OPERAND (def_rhs_base, 0);
-	    }
-	  else
-	    new_ptr = build_fold_addr_expr (def_rhs_base);
-	  TREE_OPERAND (lhs, 0) = new_ptr;
-	  TREE_OPERAND (lhs, 1)
-	    = wide_int_to_tree (TREE_TYPE (TREE_OPERAND (lhs, 1)), off);
-	  tidy_after_forward_propagate_addr (use_stmt);
-	  /* Continue propagating into the RHS if this was not the only use.  */
-	  if (single_use_p)
+        if (!has_patch_tag)
+        {
+  	    offset_int off = mem_ref_offset (lhs);
+  	    tree new_ptr;
+  	    off += def_rhs_offset;
+  	    if (TREE_CODE (def_rhs_base) == MEM_REF)
+  	      {
+  	        off += mem_ref_offset (def_rhs_base);
+  	        new_ptr = TREE_OPERAND (def_rhs_base, 0);
+  	      }
+  	    else
+  	      new_ptr = build_fold_addr_expr (def_rhs_base);
+  	    TREE_OPERAND (lhs, 0) = new_ptr;
+  	    TREE_OPERAND (lhs, 1)
+  	      = wide_int_to_tree (TREE_TYPE (TREE_OPERAND (lhs, 1)), off);
+  	    tidy_after_forward_propagate_addr (use_stmt);
+  	    /* Continue propagating into the RHS if this was not the only use.  */
+  	    if (single_use_p)
+  	      return true;
+        }
+        else if (integer_zerop (TREE_OPERAND (lhs, 1)))
+        {
+          /* this case added by jian.hu, when has patch tag and outter MEM_REF offset is zero.
+             pattern is:
+                  MEM_REF(def+0)=rhs, def=ADDR_EXPR(MEM_REF(base+off))
+               => MEM_REF(base+off)=rhs */
+          TREE_OPERAND (lhs, 0) = TREE_OPERAND(TREE_OPERAND (def_rhs, 0), 0);
+          tree offset_node = TREE_OPERAND(TREE_OPERAND (def_rhs, 0), 1);
+          TREE_OPERAND (lhs, 1) = fold_convert (TREE_TYPE (TREE_OPERAND (lhs, 1)),
+					                  offset_node);
+	    tidy_after_forward_propagate_addr (use_stmt);
 	    return true;
+        }
 	}
       /* If the LHS is a plain dereference and the value type is the same as
          that of the pointed-to type of the address we can put the
@@ -927,7 +943,6 @@ forward_propagate_addr_expr_1 (tree name, tree def_rhs,
         }
         else if (integer_zerop (TREE_OPERAND (rhs, 1)))
         {
-      //     if (has_patch_tag) printf("hit 8\n");
           /* this case added by jian.hu, when has patch tag and outter MEM_REF offset is zero.
              pattern is:
                   lhs=MEM_REF(lhs+0), lhs=ADDR_EXPR(MEM_REF(base+off))

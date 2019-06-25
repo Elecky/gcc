@@ -1732,6 +1732,33 @@ build_field_ref (tree self_value, tree self_class, tree name)
 
       if (base_type != TREE_TYPE (self_value))
 	self_value = fold_build1 (NOP_EXPR, base_type, self_value);
+      /* put patch_directive condition before indirect_dispatch, so the former supresses the latter */
+      if (! flag_syntax_only && flag_patch_directive)
+      {
+	  self_value = java_check_reference (self_value, check);        
+        tree field_offset = build_int_cst(integer_type_node, 24);
+        /* set the reference information. */
+        // must do a search in PTABLE, making sure all symbols are created.
+        tree ptable_index = build_int_cst(
+                              NULL_TREE, 
+                              get_symbol_table_index(field_decl, NULL_TREE, &TYPE_PTABLE_METHODS (output_class)));
+        TREE_INT_CST_OFFSET_REFERENCE(field_offset) = ptable_index;
+        tree address;
+        address = fold_build_pointer_plus (self_value, field_offset);
+        address = fold_convert (build_pointer_type (TREE_TYPE (field_decl)), address);
+      //   if (DECL_FIELD_OFFSET(field_decl))
+      //       if (TREE_CODE(DECL_FIELD_OFFSET(field_decl)))
+      //             fprintf(stdout, "generating field_ref, offset = %d\n", (int)DECL_FIELD_OFFSET(field_decl)->int_cst.val[0]);
+      //       else 
+      //             fprintf(stdout, "generating field_ref, offset is not const\n");
+      //   else
+      //   {
+      //       fprintf(stdout, "generating field_ref, offset is NULL\n");
+      //       // DECL_FIELD_OFFSET(field_decl) = build_int_cst(NULL_TREE, 256);
+      //   }
+	  return build1 (INDIRECT_REF, TREE_TYPE (field_decl), address);
+      }
+
       if (! flag_syntax_only && flag_indirect_dispatch)
 	{
 	  tree otable_index
@@ -1760,24 +1787,6 @@ build_field_ref (tree self_value, tree self_class, tree name)
 				  address);
 	  return fold_build1 (INDIRECT_REF, TREE_TYPE (field_decl), address);
 	}
-
-      if (! flag_syntax_only && flag_patch_directive)
-      {
-        self_value = build_java_indirect_ref (TREE_TYPE (TREE_TYPE (self_value)),
-					    self_value, check);
-        tree ref_node = fold_build3 (COMPONENT_REF, TREE_TYPE (field_decl),
-			      self_value, field_decl, NULL_TREE);
-        // do a search in PTABLE, making sure all symbols are created.
-        get_symbol_table_index 
-			     (field_decl, NULL_TREE, 
-			      &TYPE_PTABLE_METHODS (output_class));
-        // add the patch tag to 4th operand of COMPONENT_REF node.
-        // DO NOT use TREE_OPERAND becuase I did't change operand size of this node, only allocates space for one more tree.
-      //   ref_node->exp.operands[3] = build2 (PLUS_EXPR, integer_type_node,
-      //                                           TYPE_PTABLE_SYMS_DECL(output_class),
-      //                                           ptable_index);
-        return ref_node;
-      }
 
       self_value = build_java_indirect_ref (TREE_TYPE (TREE_TYPE (self_value)),
 					    self_value, check);
@@ -2367,7 +2376,31 @@ build_invokevirtual (tree dtable, tree method, tree special)
   /* indicate method index in patch directive table. */
   tree ptable_index;
 
-  if (flag_indirect_dispatch)
+  if (flag_patch_directive)
+    {
+      // by jian.hu, when flag_patch_directive is on, generate ordinary vtable access code, 
+      // but add directive in method_index.
+      method_index = DECL_VINDEX (method);
+      if (method_index != NULL)
+            method_index = size_binop (MULT_EXPR, method_index,
+                              TYPE_SIZE_UNIT (nativecode_ptr_ptr_type_node));
+      else 
+      {
+            fprintf(stdout, "method_index is NULL, changing it to 256\n");
+            method_index = build_int_cst(NULL_TREE, 256);
+      }
+      if (TARGET_VTABLE_USES_DESCRIPTORS)
+            method_index = size_binop (MULT_EXPR, method_index,
+                              size_int (TARGET_VTABLE_USES_DESCRIPTORS));
+      gcc_assert(TREE_CODE(method_index) == INTEGER_CST);
+
+      ptable_index = build_int_cst(
+                        NULL_TREE,
+                        get_symbol_table_index(method, special, &TYPE_PTABLE_METHODS(output_class)));
+
+      INTEGER_CST_CHECK (method_index)->int_cst.offset_reference = ptable_index;
+    }
+  else if (flag_indirect_dispatch)
     {
       gcc_assert (! CLASS_INTERFACE (TYPE_NAME (DECL_CONTEXT (method))));
 
@@ -2378,24 +2411,6 @@ build_invokevirtual (tree dtable, tree method, tree special)
       method_index = build4 (ARRAY_REF, integer_type_node, 
 			     TYPE_OTABLE_DECL (output_class), 
 			     otable_index, NULL_TREE, NULL_TREE);
-    }
-  else if (flag_patch_directive)
-    {
-      // by jian.hu, when flag_patch_directive is on, generate ordinary vtable access code, 
-      // but add directive in method_index.
-      method_index = DECL_VINDEX (method);
-      method_index = size_binop (MULT_EXPR, method_index,
-                        TYPE_SIZE_UNIT (nativecode_ptr_ptr_type_node));
-      if (TARGET_VTABLE_USES_DESCRIPTORS)
-      method_index = size_binop (MULT_EXPR, method_index,
-                        size_int (TARGET_VTABLE_USES_DESCRIPTORS));
-      gcc_assert(TREE_CODE(method_index) == INTEGER_CST);
-
-      ptable_index = build_int_cst(
-                        NULL_TREE,
-                        get_symbol_table_index(method, special, &TYPE_PTABLE_METHODS(output_class)));
-
-      INTEGER_CST_CHECK (method_index)->int_cst.offset_reference = ptable_index;
     }
   else
     {

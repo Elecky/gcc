@@ -2424,14 +2424,20 @@ void Elf_patcher::patch_insn(uint8_t *insn_p, int real_disp)
       {
       case 0:  /* 1-bit displacement */
             fprintf(stdout, "original displacement = %x[B]\n", static_cast<unsigned>(*disp_p));
+            if (real_disp > 127 || real_disp < -128)
+                  fprintf(stdout, "real displacement out of range for 1 byte: %d", real_disp);
             *disp_p = static_cast<uint8_t>(real_disp);
             break;
       case 1:  /* 2-bit displacement */
             fprintf(stdout, "original displacement = %x[W]\n", *reinterpret_cast<uint16_t*>(disp_p));
+            if (real_disp > INT16_MAX || real_disp < INT16_MIN)
+                  fprintf(stdout, "real displacement out of range for 2 bytes: %d", real_disp);
             *reinterpret_cast<uint16_t*>(disp_p) = static_cast<uint16_t>(real_disp);
             break;
       case 2:  /* 4-bit displacement */
             fprintf(stdout, "original displacement = %x[D]\n", *reinterpret_cast<uint32_t*>(disp_p));
+            if (real_disp > INT32_MAX || real_disp < INT32_MIN)
+                  fprintf(stdout, "real displacement out of range for 4 bytes: %d", real_disp);
             *reinterpret_cast<uint32_t*>(disp_p) = static_cast<uint32_t>(real_disp);
             break;
       default:
