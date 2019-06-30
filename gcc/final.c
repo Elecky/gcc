@@ -3642,12 +3642,14 @@ emit_patch_point_symbol (rtx *operands, const char * templ)
   int ops = 0;
   const char *p;
   int c;
-
   if (*templ == 0)
     return;
 
   memset (opoutput, 0, sizeof opoutput);
   p = templ;
+#ifdef ASM_OUTPUT_OPCODE
+  ASM_OUTPUT_AVX_PREFIX(NULL, p);
+#endif
 
   while ((c = *p++))
   {
@@ -3705,7 +3707,7 @@ emit_patch_point_symbol (rtx *operands, const char * templ)
 	   TARGET_PRINT_OPERAND hook decides what is actually done.  */
 	else if (targetm.asm_out.print_operand_punct_valid_p ((unsigned char) *p))
 	  p++;
-      }
+    }
   }
 
   int i;
@@ -3868,7 +3870,6 @@ output_asm_insn (const char *templ, rtx *operands)
   /* by jian.hu, first print patch-point symbol. */
   if (flag_patch_directive)
       emit_patch_point_symbol(operands, templ);
-
   const char *p;
   int c;
 #ifdef ASSEMBLER_DIALECT

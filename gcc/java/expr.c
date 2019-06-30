@@ -2386,7 +2386,7 @@ build_invokevirtual (tree dtable, tree method, tree special)
                               TYPE_SIZE_UNIT (nativecode_ptr_ptr_type_node));
       else 
       {
-            fprintf(stdout, "method_index is NULL, changing it to 256\n");
+            // fprintf(stdout, "method_index is NULL, changing it to 256\n");
             method_index = build_int_cst(NULL_TREE, 256);
       }
       if (TARGET_VTABLE_USES_DESCRIPTORS)
