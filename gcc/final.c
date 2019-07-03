@@ -3565,9 +3565,10 @@ output_asm_operand_names (rtx *operands, int *oporder, int nops)
    , since it's too hard to carry this information with COMPONENT_REF node.
    the reason I don't simply declare the functions is that, this module is a dependency of GCJ driver, so calling function
    into java frontend is a reverse dependency. a UNREFERENCE SYMBOL ERROR will occur if directly declare function. */
-int (*search_ptable_index_func)(tree t, tree special, tree *decl_ret) = NULL;
-void (*get_symbol_entry_func) (tree decl, tree special, tree *clname, tree *name, tree *signature) = NULL;
-int (*get_symbol_entry_by_id_func) (int id, tree *clname, tree *name, tree *signature) = NULL;
+// int (*search_ptable_index_func)(tree t, tree special, tree *decl_ret) = NULL;
+// void (*get_symbol_entry_func) (tree decl, tree special, tree *clname, tree *name, tree *signature) = NULL;
+// int (*get_symbol_entry_by_id_func) (int id, tree *clname, tree *name, tree *signature) = NULL;
+void (*gen_patch_symbol_entry_func)(tree decl, tree *clname, tree *name, tree *signature) = NULL;
 
 static void
 output_asm_mem_operand_decl (rtx *operands, int *oporder, int nops)
@@ -3593,43 +3594,28 @@ output_asm_mem_operand_decl (rtx *operands, int *oporder, int nops)
 	  wrote = 1;
       }
 
-      if (expr && TREE_CODE(expr) == COMPONENT_REF && flag_patch_directive 
-            && get_symbol_entry_func != NULL && search_ptable_index_func != NULL)
+      if (expr && TREE_CODE(expr) == COMPONENT_REF && flag_patch_directive
+          && gen_patch_symbol_entry_func != NULL)
       {
         /* only print tags for those field access created by put-field/get-field */
-        if (search_ptable_index_func(TREE_OPERAND(expr, 1), NULL_TREE, NULL) != 0)
-        {
-          tree clname, name, signature;
-          get_symbol_entry_func(TREE_OPERAND(expr, 1), NULL_TREE, &clname, &name, &signature);
-          /* print name. */
-          fprintf(asm_out_file, "{tag: ");
-          print_generic_expr (asm_out_file, CONST_CAST_TREE (clname), dump_flags);
-          fprintf(asm_out_file, ": ");
-          print_generic_expr (asm_out_file, CONST_CAST_TREE (name), dump_flags);
-          fprintf(asm_out_file, ": ");
-          print_generic_expr (asm_out_file, CONST_CAST_TREE (signature), dump_flags);
-          fprintf(asm_out_file, "}");
-        }
       }
 
       if (expr && (TREE_CODE(expr) == MEM_REF && TREE_OPERAND_LENGTH(expr) >= 2
-               && TREE_CODE(TREE_OPERAND(expr, 1)) == INTEGER_CST && TREE_INT_CST_OFFSET_REFERENCE(TREE_OPERAND(expr, 1)) != NULL_TREE))
+               && TREE_CODE(TREE_OPERAND(expr, 1)) == INTEGER_CST && TREE_INT_CST_OFFSET_REFERENCE(TREE_OPERAND(expr, 1)) != NULL_TREE)
+               && gen_patch_symbol_entry_func != NULL)
 	{
         tree clname, name, signature;
         tree tag = TREE_INT_CST_OFFSET_REFERENCE(TREE_OPERAND(expr, 1));
-        int id = TREE_INT_CST_LOW(tag);
-        if (get_symbol_entry_by_id_func(id, &clname, &name, &signature)) 
-        {
-          /* print name. */
-          fprintf(asm_out_file, "{tag: ");
-          print_generic_expr (asm_out_file, CONST_CAST_TREE (clname), dump_flags);
-          fprintf(asm_out_file, ": ");
-          print_generic_expr (asm_out_file, CONST_CAST_TREE (name), dump_flags);
-          fprintf(asm_out_file, ": ");
-          print_generic_expr (asm_out_file, CONST_CAST_TREE (signature), dump_flags);
-          fprintf(asm_out_file, "}");
-        }
-	}
+        gen_patch_symbol_entry_func(tag, &clname, &name, &signature);
+        /* print name. */
+        fprintf(asm_out_file, "{tag: ");
+        print_generic_expr (asm_out_file, CONST_CAST_TREE (clname), dump_flags);
+        fprintf(asm_out_file, ": ");
+        print_generic_expr (asm_out_file, CONST_CAST_TREE (name), dump_flags);
+        fprintf(asm_out_file, ": ");
+        print_generic_expr (asm_out_file, CONST_CAST_TREE (signature), dump_flags);
+        fprintf(asm_out_file, "}");
+      }
     }
 }
 
@@ -3638,6 +3624,7 @@ emit_patch_point_symbol (rtx *operands, const char * templ)
 {
   /* first calculate the number of operands,
      code copy and trimed from output_asm_insn. */
+  int oporder[MAX_RECOG_OPERANDS];
   char opoutput[MAX_RECOG_OPERANDS];
   int ops = 0;
   const char *p;
@@ -3681,7 +3668,7 @@ emit_patch_point_symbol (rtx *operands, const char * templ)
 				      "after %%-letter");
 
 	    if (!opoutput[opnum])
-	      ++ops;
+	      oporder[ops++] = opnum;	      
 	    opoutput[opnum] = 1;
 
 	    p = endptr;
@@ -3696,7 +3683,7 @@ emit_patch_point_symbol (rtx *operands, const char * templ)
 	    opnum = strtoul (p, &endptr, 10);
 
 	    if (!opoutput[opnum])
-	      ++ops;
+	      oporder[ops++] = opnum;
 	    opoutput[opnum] = 1;
 
 	    p = endptr;
@@ -3715,33 +3702,26 @@ emit_patch_point_symbol (rtx *operands, const char * templ)
   for (i = 0; i < ops; i++)
     {
       int addressp;
-      rtx op = operands[i];
+      rtx op = operands[oporder[i]];
       tree expr = get_mem_expr_from_op (op, &addressp);
       int flag = 0;
 
       tree clname, name, signature;
 
-      if (expr && TREE_CODE(expr) == COMPONENT_REF && flag_patch_directive 
-            && get_symbol_entry_func != NULL && search_ptable_index_func != NULL)
+      if (expr && TREE_CODE(expr) == COMPONENT_REF && flag_patch_directive && gen_patch_symbol_entry_func != NULL)
       {
         /* only print tags for those field access created by put-field/get-field */
-        if (search_ptable_index_func(TREE_OPERAND(expr, 1), NULL_TREE, NULL) != 0)
-        {
-          tree clname, name, signature;
-          get_symbol_entry_func(TREE_OPERAND(expr, 1), NULL_TREE, &clname, &name, &signature);
-          flag = 1;
-        }
+      //   gen_patch_symbol_entry_func(TREE_OPERAND(expr, 1), &clname, &name, &signature);
+      //   flag = 1;
       }
-
       if (expr && (TREE_CODE(expr) == MEM_REF && TREE_OPERAND_LENGTH(expr) >= 2
-               && TREE_CODE(TREE_OPERAND(expr, 1)) == INTEGER_CST && TREE_INT_CST_OFFSET_REFERENCE(TREE_OPERAND(expr, 1)) != NULL_TREE))
-	{
+               && TREE_CODE(TREE_OPERAND(expr, 1)) == INTEGER_CST && TREE_INT_CST_OFFSET_REFERENCE(TREE_OPERAND(expr, 1)) != NULL_TREE)
+               && gen_patch_symbol_entry_func != NULL)
+      {
         tree tag = TREE_INT_CST_OFFSET_REFERENCE(TREE_OPERAND(expr, 1));
-        int id = TREE_INT_CST_LOW(tag);
-        if (get_symbol_entry_by_id_func(id, &clname, &name, &signature)) 
-        {
-          flag = 1;
-        }
+      //   int id = TREE_INT_CST_LOW(tag);
+        gen_patch_symbol_entry_func(tag, &clname, &name, &signature);
+        flag = 1;
 	}
 
       if (flag)

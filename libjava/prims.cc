@@ -2223,7 +2223,7 @@ public:
     private:
       void load_memory_map();
 
-      void patch_insn(uint8_t *insn, int true_offset);
+      bool patch_insn(uint8_t *insn, int true_offset);
 
       const char * get_section_type(int tt);
 
@@ -2326,14 +2326,31 @@ const Elf64_Sym * Elf_patcher::get_symbol(c_str_t sym_name)
       return NULL;
 }
 
-void Elf_patcher::patch_insn(uint8_t *insn_p, int real_disp)
+bool Elf_patcher::patch_insn(uint8_t *insn_p, int real_disp)
 {
       /* 1. find the displacement position, and its size. */
       /* pointers to different parts */
       uint8_t *disp_p = NULL, *ModRM_p = NULL, *SIB_p = NULL, *REX_p = NULL;
       int disp_size_log = 0;
       /* this is actually deassembling, since x86 is so complex, there may be many conditions left out. */
-      /* here we simply assume there is no legay prefix, so insn_p points to the opcode or REX prefix */
+      bool operand_size_override = false;
+      if (*insn_p == 0x66)
+      {
+            fprintf(stdout, "operand size override, attention\n");
+            operand_size_override = true;
+            ++insn_p;
+      }
+      /* if it is VEX prefix */
+      if (*insn_p == 0xc4 || *insn_p == 0xc5)
+      {
+            fprintf(stdout, "AVX instruction met, attention\n");
+            if (*insn_p == 0xc4)
+                  insn_p += 3;
+            else
+                  insn_p += 2;            
+      }
+      /* now insn_p points to the opcode or REX prefix */
+      /* if it is REX prefix */
       if ((*insn_p & 0xf0) == 0x40)
       {
             REX_p = insn_p;
@@ -2342,27 +2359,22 @@ void Elf_patcher::patch_insn(uint8_t *insn_p, int real_disp)
       /* now insn_p points to begin of opcode */
       switch (static_cast<unsigned>(*insn_p))
       {
-      case 0xff:  /* CALL */
-      /* lots of MOVs */
-      case 0x88:
-      case 0x89:
-      case 0x8a:
-      case 0x8b:
-      case 0x8c:
-      case 0x8e:
-      case 0xc6:
-      case 0xc7:  /* MOVE imm{16/32} to r/m{16/32} */
-            ModRM_p = insn_p + 1;
+      case 0x0f:
+            if (*(insn_p + 1) == 0x3a || *(insn_p + 1) == 0x38)
+                  ModRM_p = insn_p + 3;
+            else
+                  ModRM_p = insn_p + 2;
             break;
       
       default:
+            ModRM_p = insn_p + 1;
             break;
       }
 
       if (ModRM_p == NULL)
       {
-            fprintf(stdout, "ModR/M not found for instruction with opcode[0] = %x\n", static_cast<unsigned>(*insn_p));
-            return;
+            fprintf(stdout, "ModR/M not found for instruction with opcode[0] = %2x\n", static_cast<unsigned>(*insn_p));
+            return false;
       }
       /* now according to ModR/M, calc the pointer to SIB, Disp and its size. */
       unsigned ModRM = *ModRM_p;
@@ -2417,32 +2429,44 @@ void Elf_patcher::patch_insn(uint8_t *insn_p, int real_disp)
       if (disp_p == NULL)
       {
             fprintf(stdout, "can't find displacement for instruction with opcode[0] = %x\n", static_cast<unsigned>(*insn_p));
-            return;
+            return false;
       }
       /* now we should have got the position of displacement and its length */
       switch (disp_size_log)
       {
       case 0:  /* 1-bit displacement */
-            fprintf(stdout, "original displacement = %x[B]\n", static_cast<unsigned>(*disp_p));
+            // fprintf(stdout, "original displacement = %x[B]\n", static_cast<unsigned>(*disp_p));
+            // if (static_cast<unsigned>(*disp_p) != 0x100)
+            //       fprintf(stdout, "!!!attention, original displacement not 0x100\n");
             if (real_disp > 127 || real_disp < -128)
                   fprintf(stdout, "real displacement out of range for 1 byte: %d", real_disp);
             *disp_p = static_cast<uint8_t>(real_disp);
-            break;
+            return true;
       case 1:  /* 2-bit displacement */
-            fprintf(stdout, "original displacement = %x[W]\n", *reinterpret_cast<uint16_t*>(disp_p));
+            // fprintf(stdout, "original displacement = %x[W]\n", *reinterpret_cast<uint16_t*>(disp_p));
+            if (*reinterpret_cast<uint16_t*>(disp_p) != 0x100 && *reinterpret_cast<int16_t*>(disp_p) != real_disp)
+            {
+                  fprintf(stdout, "!!!attention, original displacement not 0x100\n");
+                  return false;
+            }
             if (real_disp > INT16_MAX || real_disp < INT16_MIN)
                   fprintf(stdout, "real displacement out of range for 2 bytes: %d", real_disp);
             *reinterpret_cast<uint16_t*>(disp_p) = static_cast<uint16_t>(real_disp);
-            break;
+            return true;
       case 2:  /* 4-bit displacement */
-            fprintf(stdout, "original displacement = %x[D]\n", *reinterpret_cast<uint32_t*>(disp_p));
+            // fprintf(stdout, "original displacement = %x[D]\n", *reinterpret_cast<uint32_t*>(disp_p));
+            if (*reinterpret_cast<uint32_t*>(disp_p) != 0x100 && *reinterpret_cast<int32_t*>(disp_p) != real_disp)
+            {
+                  fprintf(stdout, "!!!attention, original displacement not 0x100\n");
+                  return false;
+            }
             if (real_disp > INT32_MAX || real_disp < INT32_MIN)
                   fprintf(stdout, "real displacement out of range for 4 bytes: %d", real_disp);
             *reinterpret_cast<uint32_t*>(disp_p) = static_cast<uint32_t>(real_disp);
-            break;
+            return true;
       default:
             fprintf(stdout, "unhandled displacement size %d\n", 1 << disp_size_log);
-            break;
+            return false;
       }
 }
 
@@ -2459,11 +2483,17 @@ void Elf_patcher::do_patch()
       const Elf64_Shdr *note_section_hdr = get_section(patch_note_sh_name);
       if (note_section_hdr != NULL)
       {
-            fprintf(stdout, "section found, length = %d\n", note_section_hdr->sh_size);
+            fprintf(stdout, "section found, length = %u\n", (unsigned)note_section_hdr->sh_size);
+      }
+      else
+      {
+            fprintf(stdout, "didn't found patch_note section, exiting\n");
+            return;
       }
 
       uint8_t *head = static_cast<uint8_t*>(m_mmap_program + note_section_hdr->sh_offset);
       uint8_t *ptr = head, *end = head + note_section_hdr->sh_size;
+      int fail_count = 0;
       while (ptr < end)
       {
             /* the symbol of function to which the patch point belong */
@@ -2476,7 +2506,7 @@ void Elf_patcher::do_patch()
             if ((offset_p & 0x3) != 0)
                   offset_p = (offset_p & ~0x3) + 4;
             int32_t offset = *reinterpret_cast<int32_t*>(offset_p);
-            fprintf(stdout, "%s %d %s ", sym, offset, ref);
+            // fprintf(stdout, "%s %d %s ", sym, offset, ref);
 
             ptr = reinterpret_cast<uint8_t*>(offset_p + sizeof(int32_t));
             
@@ -2493,12 +2523,17 @@ void Elf_patcher::do_patch()
             next = next_blank(p);
             _Jv_Utf8Const *sym_signature = _Jv_makeUtf8Const(p, next - p);
             int real_disp = _Jv_Linker::get_offset(sym_class_name, sym_name, sym_signature);
-            fprintf(stdout, "%d\n", real_disp);
+            // fprintf(stdout, "%d\n", real_disp);
 
             /* the the function symbol */
             const Elf64_Sym *func_sym = get_symbol(sym);
-            if (func_sym != NULL)
-            fprintf(stdout, "st_value = %d, ", func_sym->st_value);
+            if (func_sym == NULL)
+            {
+                  fprintf(stdout, "function symbol not found, skipping\n");
+                  ++fail_count;
+                  continue;
+            }
+            // fprintf(stdout, "st_value = %d, ", func_sym->st_value);
 
             // TODO: some checks need to be done.
             /* the instruction to be patched */
@@ -2518,10 +2553,14 @@ void Elf_patcher::do_patch()
                   break;
             }
 
-            fprintf(stdout, "*insn_p = %x\n", static_cast<unsigned>(*insn_p));
+            // fprintf(stdout, "*insn_p = %x\n", static_cast<unsigned>(*insn_p));
 
-            patch_insn(insn_p, real_disp);
+            if (!patch_insn(insn_p, real_disp)) {
+                  ++fail_count;
+                  fprintf(stdout, "failure @%s + %d\n ref=%s\n real_disp = %d\n", sym, offset, ref, real_disp);
+            }
       }
+      fprintf(stdout, "failures: %d\n", fail_count);
 }
 
 }  // namespace elf_patcher

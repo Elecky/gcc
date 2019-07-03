@@ -58,8 +58,8 @@ The Free Software Foundation is independent of Sun Microsystems, Inc.  */
 #include "tree-iterator.h"
 #include "target.h"
 
-extern int (*search_ptable_index_func)(tree t, tree special, tree *decl_ret);
-int search_ptable_index(tree t, tree special, tree *decl_ret);
+tree unshare_expr (tree expr);
+// int search_ptable_index(tree t, tree special, tree *decl_ret);
 
 static void flush_quick_stack (void);
 static void push_value (tree);
@@ -1736,13 +1736,14 @@ build_field_ref (tree self_value, tree self_class, tree name)
       if (! flag_syntax_only && flag_patch_directive)
       {
 	  self_value = java_check_reference (self_value, check);        
-        tree field_offset = build_int_cst(integer_type_node, 24);
+        tree field_offset = build_int_cst(integer_type_node, 256);
+        field_offset = unshare_expr(field_offset);
         /* set the reference information. */
         // must do a search in PTABLE, making sure all symbols are created.
-        tree ptable_index = build_int_cst(
-                              NULL_TREE, 
-                              get_symbol_table_index(field_decl, NULL_TREE, &TYPE_PTABLE_METHODS (output_class)));
-        TREE_INT_CST_OFFSET_REFERENCE(field_offset) = ptable_index;
+      //   tree ptable_index = build_int_cst(
+      //                         NULL_TREE, 
+      //                         get_symbol_table_index(field_decl, NULL_TREE, &TYPE_PTABLE_METHODS (output_class)));
+        TREE_INT_CST_OFFSET_REFERENCE(field_offset) = field_decl;
         tree address;
         address = fold_build_pointer_plus (self_value, field_offset);
         address = fold_convert (build_pointer_type (TREE_TYPE (field_decl)), address);
@@ -2345,25 +2346,26 @@ get_symbol_table_index (tree t, tree special,
   return i + 1;
 }
 
-int search_ptable_index(tree t, tree special, tree *decl_ret)
-{
-  if (decl_ret)
-  {
-    *decl_ret = TYPE_PTABLE_SYMS_DECL(output_class);
-  }
+// by jian.hu
+// int search_ptable_index(tree t, tree special, tree *decl_ret)
+// {
+//   if (decl_ret)
+//   {
+//     *decl_ret = TYPE_PTABLE_SYMS_DECL(output_class);
+//   }
 
-  method_entry *e;
-  unsigned i;
-//   method_entry elem = {t, special};
+//   method_entry *e;
+//   unsigned i;
+// //   method_entry elem = {t, special};
 
-  FOR_EACH_VEC_SAFE_ELT (TYPE_PTABLE_METHODS(output_class), i, e)
-    if (t == e->method && special == e->special)
-    {
-      return i + 1;
-    }
+//   FOR_EACH_VEC_SAFE_ELT (TYPE_PTABLE_METHODS(output_class), i, e)
+//     if (t == e->method && special == e->special)
+//     {
+//       return i + 1;
+//     }
 
-  return 0;
-}
+//   return 0;
+// }
 
 tree 
 build_invokevirtual (tree dtable, tree method, tree special)
@@ -2374,10 +2376,12 @@ build_invokevirtual (tree dtable, tree method, tree special)
   tree method_index;
   tree otable_index;
   /* indicate method index in patch directive table. */
-  tree ptable_index;
+//   tree ptable_index;
 
   if (flag_patch_directive)
     {
+      if (special)
+            fprintf(stderr, "met special, attention!\n");
       // by jian.hu, when flag_patch_directive is on, generate ordinary vtable access code, 
       // but add directive in method_index.
       method_index = DECL_VINDEX (method);
@@ -2392,13 +2396,14 @@ build_invokevirtual (tree dtable, tree method, tree special)
       if (TARGET_VTABLE_USES_DESCRIPTORS)
             method_index = size_binop (MULT_EXPR, method_index,
                               size_int (TARGET_VTABLE_USES_DESCRIPTORS));
+      method_index = unshare_expr(method_index);
       gcc_assert(TREE_CODE(method_index) == INTEGER_CST);
 
-      ptable_index = build_int_cst(
-                        NULL_TREE,
-                        get_symbol_table_index(method, special, &TYPE_PTABLE_METHODS(output_class)));
+      // ptable_index = build_int_cst(
+      //                   NULL_TREE,
+      //                   get_symbol_table_index(method, special, &TYPE_PTABLE_METHODS(output_class)));
 
-      INTEGER_CST_CHECK (method_index)->int_cst.offset_reference = ptable_index;
+      INTEGER_CST_CHECK (method_index)->int_cst.offset_reference = method;
     }
   else if (flag_indirect_dispatch)
     {
