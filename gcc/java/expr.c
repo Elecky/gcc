@@ -1736,7 +1736,7 @@ build_field_ref (tree self_value, tree self_class, tree name)
       if (! flag_syntax_only && flag_patch_directive)
       {
 	  self_value = java_check_reference (self_value, check);        
-        tree field_offset = build_int_cst(integer_type_node, 256);
+        tree field_offset = build_int_cst(integer_type_node, 0x2333);
         field_offset = unshare_expr(field_offset);
         /* set the reference information. */
         // must do a search in PTABLE, making sure all symbols are created.
@@ -2390,8 +2390,8 @@ build_invokevirtual (tree dtable, tree method, tree special)
                               TYPE_SIZE_UNIT (nativecode_ptr_ptr_type_node));
       else 
       {
-            // fprintf(stdout, "method_index is NULL, changing it to 256\n");
-            method_index = build_int_cst(NULL_TREE, 256);
+            // fprintf(stdout, "method_index is NULL, changing it to 0x2333\n");
+            method_index = build_int_cst(NULL_TREE, 0x2333);
       }
       if (TARGET_VTABLE_USES_DESCRIPTORS)
             method_index = size_binop (MULT_EXPR, method_index,

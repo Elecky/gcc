@@ -2436,7 +2436,7 @@ bool Elf_patcher::patch_insn(uint8_t *insn_p, int real_disp)
       {
       case 0:  /* 1-bit displacement */
             // fprintf(stdout, "original displacement = %x[B]\n", static_cast<unsigned>(*disp_p));
-            // if (static_cast<unsigned>(*disp_p) != 0x100)
+            // if (static_cast<unsigned>(*disp_p) != 0x2333)
             //       fprintf(stdout, "!!!attention, original displacement not 0x100\n");
             if (real_disp > 127 || real_disp < -128)
                   fprintf(stdout, "real displacement out of range for 1 byte: %d", real_disp);
@@ -2444,7 +2444,7 @@ bool Elf_patcher::patch_insn(uint8_t *insn_p, int real_disp)
             return true;
       case 1:  /* 2-bit displacement */
             // fprintf(stdout, "original displacement = %x[W]\n", *reinterpret_cast<uint16_t*>(disp_p));
-            if (*reinterpret_cast<uint16_t*>(disp_p) != 0x100 && *reinterpret_cast<int16_t*>(disp_p) != real_disp)
+            if (*reinterpret_cast<uint16_t*>(disp_p) != 0x2333 && *reinterpret_cast<int16_t*>(disp_p) != real_disp)
             {
                   fprintf(stdout, "!!!attention, original displacement not 0x100\n");
                   return false;
@@ -2455,7 +2455,7 @@ bool Elf_patcher::patch_insn(uint8_t *insn_p, int real_disp)
             return true;
       case 2:  /* 4-bit displacement */
             // fprintf(stdout, "original displacement = %x[D]\n", *reinterpret_cast<uint32_t*>(disp_p));
-            if (*reinterpret_cast<uint32_t*>(disp_p) != 0x100 && *reinterpret_cast<int32_t*>(disp_p) != real_disp)
+            if (*reinterpret_cast<uint32_t*>(disp_p) != 0x2333 && *reinterpret_cast<int32_t*>(disp_p) != real_disp)
             {
                   fprintf(stdout, "!!!attention, original displacement not 0x100\n");
                   return false;
@@ -2506,7 +2506,7 @@ void Elf_patcher::do_patch()
             if ((offset_p & 0x3) != 0)
                   offset_p = (offset_p & ~0x3) + 4;
             int32_t offset = *reinterpret_cast<int32_t*>(offset_p);
-            // fprintf(stdout, "%s %d %s ", sym, offset, ref);
+            // fprintf(stdout, "@%s + %d\n", sym, offset);
 
             ptr = reinterpret_cast<uint8_t*>(offset_p + sizeof(int32_t));
             
@@ -2522,7 +2522,15 @@ void Elf_patcher::do_patch()
             p = next + 1;
             next = next_blank(p);
             _Jv_Utf8Const *sym_signature = _Jv_makeUtf8Const(p, next - p);
+            // fprintf(stdout, "clname=%s, name=%s, sig=%s\n", sym_class_name->chars(), sym_name->chars(), sym_signature->chars());
+            // fprintf(stdout, "try getting real displacement\n");
             int real_disp = _Jv_Linker::get_offset(sym_class_name, sym_name, sym_signature);
+            if (real_disp == -1)
+            {
+                  fprintf(stdout, "failed to get real displacement\n");
+                  ++fail_count;
+                  continue;
+            }
             // fprintf(stdout, "%d\n", real_disp);
 
             /* the the function symbol */
@@ -2550,6 +2558,7 @@ void Elf_patcher::do_patch()
             else 
             {
                   fprintf(stdout, "unhandled elf_type %d\n", elf_type);
+                  ++fail_count;
                   break;
             }
 
@@ -2557,8 +2566,12 @@ void Elf_patcher::do_patch()
 
             if (!patch_insn(insn_p, real_disp)) {
                   ++fail_count;
-                  fprintf(stdout, "failure @%s + %d\n ref=%s\n real_disp = %d\n", sym, offset, ref, real_disp);
+                  fprintf(stdout, "failure @%s + %d\n clname=%s, name=%s, sig=%s\n real_disp = %d\n", 
+                              sym, offset, ref, 
+                              sym_class_name->chars(), sym_name->chars(), sym_signature->chars(),
+                              real_disp);
             }
+            // fprintf(stdout, "end try patching one\n");
       }
       fprintf(stdout, "failures: %d\n", fail_count);
 }

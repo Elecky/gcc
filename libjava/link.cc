@@ -2109,7 +2109,14 @@ int _Jv_Linker::get_offset(
 {
       /* VMClass::getSystemClassLoader can only be called once, so use java::lang::ClassLoader::getSystemClassLoader!!! */
       java::lang::ClassLoader *class_loader = java::lang::ClassLoader::getSystemClassLoader();
-      jclass target_class = _Jv_FindClass (class_name, class_loader);
+      jclass target_class;
+      try {
+            target_class = _Jv_FindClass (class_name, class_loader);
+      }
+      catch (java::lang::Throwable *ex) {
+            fprintf(stdout, "fail loading class [%s]\n", class_name->chars());
+            return -1;
+      }
       /* FIXME: here we set klass = target_class, this bypasses any access check! */
       jclass klass = target_class;
       _Jv_Method *meth = NULL;
@@ -2180,7 +2187,7 @@ int _Jv_Linker::get_offset(
 	      offset = throwNoSuchMethodErrorIndex;		    
 	    
 	    if (offset == -1)
-	      JvFail ("Bad method index");
+	      fprintf (stdout, "Bad method index\n");
 	    JvAssert (meth->index < target_class->vtable_method_count);
 	    
 	//     klass->otable->offsets[index] = offset;
@@ -2199,10 +2206,13 @@ int _Jv_Linker::get_offset(
 	  the_field = find_field(klass, target_class, &found_class,
 	  	                  name, signature);
 	  if ((the_field->flags & java::lang::reflect::Modifier::STATIC))
-	    throw new java::lang::IncompatibleClassChangeError;
+        {
+            fprintf(stdout, "IncompatibleClassChange\n");
+	      return -1;
+        }
 	  else
 	    return the_field->u.boffset;
       }
-      
+      /* unreachable */
       return -1;
 }
