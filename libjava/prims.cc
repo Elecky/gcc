@@ -2434,14 +2434,14 @@ bool Elf_patcher::patch_insn(uint8_t *insn_p, int real_disp)
       /* now we should have got the position of displacement and its length */
       switch (disp_size_log)
       {
-      case 0:  /* 1-bit displacement */
-            // fprintf(stdout, "original displacement = %x[B]\n", static_cast<unsigned>(*disp_p));
-            // if (static_cast<unsigned>(*disp_p) != 0x2333)
-            //       fprintf(stdout, "!!!attention, original displacement not 0x100\n");
-            if (real_disp > 127 || real_disp < -128)
-                  fprintf(stdout, "real displacement out of range for 1 byte: %d", real_disp);
-            *disp_p = static_cast<uint8_t>(real_disp);
-            return true;
+      // case 0:  /* 1-bit displacement */
+      //       // fprintf(stdout, "original displacement = %x[B]\n", static_cast<unsigned>(*disp_p));
+      //       // if (static_cast<unsigned>(*disp_p) != 0x2333)
+      //       //       fprintf(stdout, "!!!attention, original displacement not 0x100\n");
+      //       if (real_disp > 127 || real_disp < -128)
+      //             fprintf(stdout, "real displacement out of range for 1 byte: %d", real_disp);
+      //       *disp_p = static_cast<uint8_t>(real_disp);
+      //       return true;
       case 1:  /* 2-bit displacement */
             // fprintf(stdout, "original displacement = %x[W]\n", *reinterpret_cast<uint16_t*>(disp_p));
             if (*reinterpret_cast<uint16_t*>(disp_p) != 0x2333 && *reinterpret_cast<int16_t*>(disp_p) != real_disp)
@@ -2464,6 +2464,7 @@ bool Elf_patcher::patch_insn(uint8_t *insn_p, int real_disp)
                   fprintf(stdout, "real displacement out of range for 4 bytes: %d", real_disp);
             *reinterpret_cast<uint32_t*>(disp_p) = static_cast<uint32_t>(real_disp);
             return true;
+      case 0:
       default:
             fprintf(stdout, "unhandled displacement size %d\n", 1 << disp_size_log);
             return false;

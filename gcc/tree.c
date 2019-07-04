@@ -1388,7 +1388,9 @@ int_cst_hasher::equal (tree x, tree y)
 
   if (TREE_TYPE (xt) != TREE_TYPE (yt)
       || TREE_INT_CST_NUNITS (xt) != TREE_INT_CST_NUNITS (yt)
-      || TREE_INT_CST_EXT_NUNITS (xt) != TREE_INT_CST_EXT_NUNITS (yt))
+      || TREE_INT_CST_EXT_NUNITS (xt) != TREE_INT_CST_EXT_NUNITS (yt)
+      /* by jian.hu, tree equal test needs to check ref */
+      || TREE_INT_CST_OFFSET_REFERENCE (xt) != TREE_INT_CST_OFFSET_REFERENCE (yt))
     return false;
 
   for (int i = 0; i < TREE_INT_CST_NUNITS (xt); i++)
@@ -7284,7 +7286,7 @@ simple_cst_equal (const_tree t1, const_tree t2)
   switch (code1)
     {
     case INTEGER_CST:
-      return wi::to_widest (t1) == wi::to_widest (t2);
+      return wi::to_widest (t1) == wi::to_widest (t2) && TREE_INT_CST_OFFSET_REFERENCE(t1) == TREE_INT_CST_OFFSET_REFERENCE(t2);
 
     case REAL_CST:
       return REAL_VALUES_IDENTICAL (TREE_REAL_CST (t1), TREE_REAL_CST (t2));

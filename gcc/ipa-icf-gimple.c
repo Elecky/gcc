@@ -289,6 +289,16 @@ func_checker::compare_memory_operand (tree t1, tree t2)
     return true;
   else if (!t1 || !t2)
     return false;
+  if (TREE_OPERAND_LENGTH(t1) >= 2 && TREE_OPERAND_LENGTH(t2) >= 2) {
+        tree offset1 = TREE_OPERAND(t1, 1);
+        tree offset2 = TREE_OPERAND(t2, 1);
+        if (offset1 != NULL_TREE && TREE_CODE(offset1) == INTEGER_CST &&
+            offset2 != NULL_TREE && TREE_CODE(offset2) == INTEGER_CST &&
+            TREE_INT_CST_OFFSET_REFERENCE(offset1) != TREE_INT_CST_OFFSET_REFERENCE(offset2))
+        {
+              return return_false_with_msg ("different reference target"); 
+        }
+  }
 
   ao_ref r1, r2;
   ao_ref_init (&r1, t1);

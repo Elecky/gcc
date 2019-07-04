@@ -1735,7 +1735,7 @@ build_field_ref (tree self_value, tree self_class, tree name)
       /* put patch_directive condition before indirect_dispatch, so the former supresses the latter */
       if (! flag_syntax_only && flag_patch_directive)
       {
-	  self_value = java_check_reference (self_value, check);        
+	  self_value = java_check_reference (self_value, check);
         tree field_offset = build_int_cst(integer_type_node, 0x2333);
         field_offset = unshare_expr(field_offset);
         /* set the reference information. */
@@ -2384,18 +2384,18 @@ build_invokevirtual (tree dtable, tree method, tree special)
             fprintf(stderr, "met special, attention!\n");
       // by jian.hu, when flag_patch_directive is on, generate ordinary vtable access code, 
       // but add directive in method_index.
-      method_index = DECL_VINDEX (method);
-      if (method_index != NULL)
-            method_index = size_binop (MULT_EXPR, method_index,
-                              TYPE_SIZE_UNIT (nativecode_ptr_ptr_type_node));
-      else 
-      {
-            // fprintf(stdout, "method_index is NULL, changing it to 0x2333\n");
-            method_index = build_int_cst(NULL_TREE, 0x2333);
-      }
+      // method_index = DECL_VINDEX (method);
+      // if (method_index != NULL)
+      //       method_index = size_binop (MULT_EXPR, method_index,
+      //                         TYPE_SIZE_UNIT (nativecode_ptr_ptr_type_node));
+      // else 
+      // {
+      //       // fprintf(stdout, "method_index is NULL, changing it to 0x2333\n");
+      //       method_index = build_int_cst(NULL_TREE, 0x2333);
+      // }
       if (TARGET_VTABLE_USES_DESCRIPTORS)
-            method_index = size_binop (MULT_EXPR, method_index,
-                              size_int (TARGET_VTABLE_USES_DESCRIPTORS));
+            fprintf(stderr, "TARGET_VTABLE_USES_DESCRIPTORS, attention!\n");
+      method_index = build_int_cst(NULL_TREE, 0x2333);      
       method_index = unshare_expr(method_index);
       gcc_assert(TREE_CODE(method_index) == INTEGER_CST);
 
