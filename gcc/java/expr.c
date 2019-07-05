@@ -60,6 +60,7 @@ The Free Software Foundation is independent of Sun Microsystems, Inc.  */
 
 tree unshare_expr (tree expr);
 // int search_ptable_index(tree t, tree special, tree *decl_ret);
+int search_ref_table(tree t, tree special);
 
 static void flush_quick_stack (void);
 static void push_value (tree);
@@ -1736,7 +1737,8 @@ build_field_ref (tree self_value, tree self_class, tree name)
       if (! flag_syntax_only && flag_patch_directive)
       {
 	  self_value = java_check_reference (self_value, check);
-        tree field_offset = build_int_cst(integer_type_node, 0x2333);
+        int ref_id = search_ref_table(field_decl, NULL_TREE);
+        tree field_offset = build_int_cst(integer_type_node, (ref_id << 16) | 0x2333);
         field_offset = unshare_expr(field_offset);
         /* set the reference information. */
         // must do a search in PTABLE, making sure all symbols are created.
@@ -2367,6 +2369,23 @@ get_symbol_table_index (tree t, tree special,
 //   return 0;
 // }
 
+/* by jian.hu */
+int search_ref_table(tree t, tree special)
+{
+      static vec<method_entry> ref_table;
+      // vec<method_entry, va_gc> *ref_table = TYPE_REF_TABLE(output_class);
+      method_entry elem = {t, special};
+
+      for (unsigned idx = 0; idx < ref_table.length(); ++idx)
+      {
+            method_entry &e = ref_table[idx];
+            if (t == e.method && special == e.special)
+                  return idx + 1;
+      }
+      ref_table.safe_push(elem);
+      return ref_table.length();
+}
+
 tree 
 build_invokevirtual (tree dtable, tree method, tree special)
 {
@@ -2393,9 +2412,10 @@ build_invokevirtual (tree dtable, tree method, tree special)
       //       // fprintf(stdout, "method_index is NULL, changing it to 0x2333\n");
       //       method_index = build_int_cst(NULL_TREE, 0x2333);
       // }
+      int ref_id = search_ref_table(method, special);
       if (TARGET_VTABLE_USES_DESCRIPTORS)
             fprintf(stderr, "TARGET_VTABLE_USES_DESCRIPTORS, attention!\n");
-      method_index = build_int_cst(NULL_TREE, 0x2333);      
+      method_index = build_int_cst(NULL_TREE, (ref_id << 16) | 0x2333);
       method_index = unshare_expr(method_index);
       gcc_assert(TREE_CODE(method_index) == INTEGER_CST);
 

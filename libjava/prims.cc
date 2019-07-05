@@ -2455,9 +2455,9 @@ bool Elf_patcher::patch_insn(uint8_t *insn_p, int real_disp)
             return true;
       case 2:  /* 4-bit displacement */
             // fprintf(stdout, "original displacement = %x[D]\n", *reinterpret_cast<uint32_t*>(disp_p));
-            if (*reinterpret_cast<uint32_t*>(disp_p) != 0x2333 && *reinterpret_cast<int32_t*>(disp_p) != real_disp)
+            if ((*reinterpret_cast<uint32_t*>(disp_p) & 0xffff) != 0x2333 && *reinterpret_cast<int32_t*>(disp_p) != real_disp)
             {
-                  fprintf(stdout, "!!!attention, original displacement not 0x100\n");
+                  fprintf(stdout, "!!!attention, original displacement not magic ref_id\n");
                   return false;
             }
             if (real_disp > INT32_MAX || real_disp < INT32_MIN)
@@ -2568,7 +2568,7 @@ void Elf_patcher::do_patch()
             if (!patch_insn(insn_p, real_disp)) {
                   ++fail_count;
                   fprintf(stdout, "failure @%s + %d\n clname=%s, name=%s, sig=%s\n real_disp = %d\n", 
-                              sym, offset, ref, 
+                              sym, offset, 
                               sym_class_name->chars(), sym_name->chars(), sym_signature->chars(),
                               real_disp);
             }
