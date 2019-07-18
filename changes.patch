@@ -1,0 +1,1867 @@
+diff --git a/.gitignore b/.gitignore
+index ab97ac67cb4..215d1e749a4 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -47,3 +47,11 @@ lost+found
+ # ignore ./contrib/gcc_update output
+ LAST_UPDATED
+ REVISION
++
++.vscode
++gmp*
++isl*
++mpc*
++mpfr*
++libjava/classpath/*
++ecj.jar
+diff --git a/gcc/final.c b/gcc/final.c
+index 1fa93d9036d..421bb22d1ab 100644
+--- a/gcc/final.c
++++ b/gcc/final.c
+@@ -254,6 +254,21 @@ static int align_fuzz (rtx, rtx, int, unsigned);
+ static void collect_fn_hard_reg_usage (void);
+ static tree get_call_fndecl (rtx_insn *);
+ 
++/* by jian.hu, stores patch notes */
++struct patch_note
++{
++  tree clname, name, signature;
++};
++
++#define PATCH_NOTE_COUNT 500
++
++struct patch_note patch_notes[PATCH_NOTE_COUNT];
++int patch_note_idx;
++const char *cur_function;
++
++// static void
++// emit_patch_point_symbol (rtx *operands, int nops);
++
+ /* Initialize data in final at the beginning of a compilation.  */
+ 
+ void
+@@ -3546,6 +3561,183 @@ output_asm_operand_names (rtx *operands, int *oporder, int nops)
+     }
+ }
+ 
++/* by jian.hu, this function pointer will be used to find PTABLE_INDEX of field referenced by COMPONENT_REF
++   , since it's too hard to carry this information with COMPONENT_REF node.
++   the reason I don't simply declare the functions is that, this module is a dependency of GCJ driver, so calling function
++   into java frontend is a reverse dependency. a UNREFERENCE SYMBOL ERROR will occur if directly declare function. */
++// int (*search_ptable_index_func)(tree t, tree special, tree *decl_ret) = NULL;
++// void (*get_symbol_entry_func) (tree decl, tree special, tree *clname, tree *name, tree *signature) = NULL;
++// int (*get_symbol_entry_by_id_func) (int id, tree *clname, tree *name, tree *signature) = NULL;
++void (*gen_patch_symbol_entry_func)(tree decl, tree *clname, tree *name, tree *signature) = NULL;
++
++static void
++output_asm_mem_operand_decl (rtx *operands, int *oporder, int nops)
++{
++  int wrote = 0;
++  int i;
++
++  for (i = 0; i < nops; i++)
++    {
++      int addressp;
++      rtx op = operands[oporder[i]];
++      tree expr = get_mem_expr_from_op (op, &addressp);
++
++      fprintf (asm_out_file, "%c%s ",
++	       wrote ? ',' : '\t', wrote ? "" : ASM_COMMENT_START);
++      wrote = 1;
++
++      if (expr)
++      {
++        fprintf (asm_out_file, "%s",
++	  	   addressp ? "*" : "");
++	  print_mem_expr (asm_out_file, expr);
++	  wrote = 1;
++      }
++
++      if (expr && TREE_CODE(expr) == COMPONENT_REF && flag_patch_directive
++          && gen_patch_symbol_entry_func != NULL)
++      {
++        /* only print tags for those field access created by put-field/get-field */
++      }
++
++      if (expr && (TREE_CODE(expr) == MEM_REF && TREE_OPERAND_LENGTH(expr) >= 2
++               && TREE_CODE(TREE_OPERAND(expr, 1)) == INTEGER_CST && TREE_INT_CST_OFFSET_REFERENCE(TREE_OPERAND(expr, 1)) != NULL_TREE)
++               && gen_patch_symbol_entry_func != NULL)
++	{
++        tree clname, name, signature;
++        tree tag = TREE_INT_CST_OFFSET_REFERENCE(TREE_OPERAND(expr, 1));
++        gen_patch_symbol_entry_func(tag, &clname, &name, &signature);
++        /* print name. */
++        fprintf(asm_out_file, "{tag: ");
++        print_generic_expr (asm_out_file, CONST_CAST_TREE (clname), dump_flags);
++        fprintf(asm_out_file, ": ");
++        print_generic_expr (asm_out_file, CONST_CAST_TREE (name), dump_flags);
++        fprintf(asm_out_file, ": ");
++        print_generic_expr (asm_out_file, CONST_CAST_TREE (signature), dump_flags);
++        fprintf(asm_out_file, "}");
++      }
++    }
++}
++
++static void
++emit_patch_point_symbol (rtx *operands, const char * templ)
++{
++  /* first calculate the number of operands,
++     code copy and trimed from output_asm_insn. */
++  int oporder[MAX_RECOG_OPERANDS];
++  char opoutput[MAX_RECOG_OPERANDS];
++  int ops = 0;
++  const char *p;
++  int c;
++  if (*templ == 0)
++    return;
++
++  memset (opoutput, 0, sizeof opoutput);
++  p = templ;
++#ifdef ASM_OUTPUT_OPCODE
++  ASM_OUTPUT_AVX_PREFIX(NULL, p);
++#endif
++
++  while ((c = *p++))
++  {
++    if (c == '%')
++    {
++	if (*p == '%')
++	  {
++	    p++;
++        }
++	else if (*p == '=')
++	  {
++	    p++;
++	  }
++	/* % followed by a letter and some digits
++	   outputs an operand in a special way depending on the letter.
++	   Letters `acln' are implemented directly.
++	   Other letters are passed to `output_operand' so that
++	   the TARGET_PRINT_OPERAND hook can define them.  */
++	else if (ISALPHA (*p))
++	  {
++	    int letter = *p++;
++	    unsigned long opnum;
++	    char *endptr;
++
++	    opnum = strtoul (p, &endptr, 10);
++
++	    if (endptr == p)
++	      output_operand_lossage ("operand number missing "
++				      "after %%-letter");
++
++	    if (!opoutput[opnum])
++	      oporder[ops++] = opnum;	      
++	    opoutput[opnum] = 1;
++
++	    p = endptr;
++	    c = *p;
++	  }
++	/* % followed by a digit outputs an operand the default way.  */
++	else if (ISDIGIT (*p))
++	  {
++	    unsigned long opnum;
++	    char *endptr;
++
++	    opnum = strtoul (p, &endptr, 10);
++
++	    if (!opoutput[opnum])
++	      oporder[ops++] = opnum;
++	    opoutput[opnum] = 1;
++
++	    p = endptr;
++	    c = *p;
++	  }
++	/* % followed by punctuation: output something for that
++	   punctuation character alone, with no operand.  The
++	   TARGET_PRINT_OPERAND hook decides what is actually done.  */
++	else if (targetm.asm_out.print_operand_punct_valid_p ((unsigned char) *p))
++	  p++;
++    }
++  }
++
++  int i;
++//   printf("nops = %d\n", ops);
++  for (i = 0; i < ops; i++)
++    {
++      int addressp;
++      rtx op = operands[oporder[i]];
++      tree expr = get_mem_expr_from_op (op, &addressp);
++      int flag = 0;
++
++      tree clname, name, signature;
++
++      if (expr && TREE_CODE(expr) == COMPONENT_REF && flag_patch_directive && gen_patch_symbol_entry_func != NULL)
++      {
++        /* only print tags for those field access created by put-field/get-field */
++      //   gen_patch_symbol_entry_func(TREE_OPERAND(expr, 1), &clname, &name, &signature);
++      //   flag = 1;
++      }
++      if (expr && (TREE_CODE(expr) == MEM_REF && TREE_OPERAND_LENGTH(expr) >= 2
++               && TREE_CODE(TREE_OPERAND(expr, 1)) == INTEGER_CST && TREE_INT_CST_OFFSET_REFERENCE(TREE_OPERAND(expr, 1)) != NULL_TREE)
++               && gen_patch_symbol_entry_func != NULL)
++      {
++        tree tag = TREE_INT_CST_OFFSET_REFERENCE(TREE_OPERAND(expr, 1));
++      //   int id = TREE_INT_CST_LOW(tag);
++        gen_patch_symbol_entry_func(tag, &clname, &name, &signature);
++        flag = 1;
++	}
++
++      if (flag)
++      {
++        /* print patch point symbol first. */
++        fprintf(asm_out_file, "\t.set\tpatch_point%d, .-%s\n", patch_note_idx, cur_function);
++        gcc_assert(patch_note_idx < PATCH_NOTE_COUNT);
++        patch_notes[patch_note_idx].clname = clname;
++        patch_notes[patch_note_idx].name = name;
++        patch_notes[patch_note_idx].signature = signature;
++        ++patch_note_idx;
++        return;
++      }
++    }
++}
++
+ #ifdef ASSEMBLER_DIALECT
+ /* Helper function to parse assembler dialects in the asm string.
+    This is called from output_asm_insn and asm_fprintf.  */
+@@ -3655,6 +3847,9 @@ do_assembler_dialects (const char *p, int *dialect)
+ void
+ output_asm_insn (const char *templ, rtx *operands)
+ {
++  /* by jian.hu, first print patch-point symbol. */
++  if (flag_patch_directive)
++      emit_patch_point_symbol(operands, templ);
+   const char *p;
+   int c;
+ #ifdef ASSEMBLER_DIALECT
+@@ -3683,6 +3878,8 @@ output_asm_insn (const char *templ, rtx *operands)
+       case '\n':
+ 	if (flag_verbose_asm)
+ 	  output_asm_operand_names (operands, oporder, ops);
++      if (flag_patch_directive)
++        output_asm_mem_operand_decl(operands, oporder, ops);
+ 	if (flag_print_asm_name)
+ 	  output_asm_name ();
+ 
+@@ -3814,6 +4011,9 @@ output_asm_insn (const char *templ, rtx *operands)
+   /* Write out the variable names for operands, if we know them.  */
+   if (flag_verbose_asm)
+     output_asm_operand_names (operands, oporder, ops);
++  /* by jian.hu: output the MEM_EXPR information for operands, if we know them. */
++  if (flag_patch_directive)
++    output_asm_mem_operand_decl(operands, oporder, ops);
+   if (flag_print_asm_name)
+     output_asm_name ();
+ 
+@@ -4481,7 +4681,10 @@ leaf_renumber_regs_insn (rtx in_rtx)
+ static unsigned int
+ rest_of_handle_final (void)
+ {
++  patch_note_idx = 0;
++
+   const char *fnname = get_fnname_from_decl (current_function_decl);
++  cur_function = fnname;
+ 
+   assemble_start_function (current_function_decl, fnname);
+   final_start_function (get_insns (), asm_out_file, optimize);
+@@ -4534,6 +4737,23 @@ rest_of_handle_final (void)
+     targetm.asm_out.destructor (XEXP (DECL_RTL (current_function_decl), 0),
+ 				decl_fini_priority_lookup
+ 				  (current_function_decl));
++  
++  /* by jian.hu, maybe output patch_note section at here? */
++  fprintf(asm_out_file, "\t.section patch_note\n");
++  for (int idx = 0; idx < patch_note_idx; ++idx)
++  {
++    fprintf(asm_out_file, "\t.asciz\t\"%s\"\n", fnname);
++    fprintf(asm_out_file, "\t.asciz\t\"");
++    print_generic_expr (asm_out_file, CONST_CAST_TREE (patch_notes[idx].clname), dump_flags);
++    putc(' ', asm_out_file);
++    print_generic_expr (asm_out_file, CONST_CAST_TREE (patch_notes[idx].name), dump_flags);
++    putc(' ', asm_out_file);
++    print_generic_expr (asm_out_file, CONST_CAST_TREE (patch_notes[idx].signature), dump_flags);
++    fprintf(asm_out_file, "\"\n");
++    fprintf(asm_out_file, "\t.balign\t4\n");
++    fprintf(asm_out_file, "\t.int\tpatch_point%d\n", idx);
++  }
++  in_section = NULL;
+   return 0;
+ }
+ 
+diff --git a/gcc/fold-const.c b/gcc/fold-const.c
+index f964ae98790..b33d14d5a43 100644
+--- a/gcc/fold-const.c
++++ b/gcc/fold-const.c
+@@ -1866,18 +1866,34 @@ size_diffop_loc (location_t loc, tree arg0, tree arg1)
+ 							     arg1, arg0)));
+ }
+ 
++tree force_fit_type_no_share (tree, const wide_int_ref &, int, bool);
++
+ /* A subroutine of fold_convert_const handling conversions of an
+    INTEGER_CST to another integer type.  */
+ 
+ static tree
+ fold_convert_const_int_from_int (tree type, const_tree arg1)
+ {
+-  /* Given an integer constant, make new constant with new type,
+-     appropriately sign-extended or truncated.  Use widest_int
+-     so that any extension is done according ARG1's type.  */
+-  return force_fit_type (type, wi::to_widest (arg1),
+-			 !POINTER_TYPE_P (TREE_TYPE (arg1)),
+-			 TREE_OVERFLOW (arg1));
++  if (arg1->int_cst.offset_reference == NULL_TREE) 
++    {
++      /* Given an integer constant, make new constant with new type,
++            appropriately sign-extended or truncated.  Use widest_int
++            so that any extension is done according ARG1's type.  */
++      return force_fit_type (type, wi::to_widest (arg1),
++                        !POINTER_TYPE_P (TREE_TYPE (arg1)),
++                        TREE_OVERFLOW (arg1));
++    }
++  else
++    {
++      /* added by jian.hu, if arg1 is an integer_cst with offset reference tag,
++         always make new tree node, so don't call force_fit_type */
++      tree new_node = force_fit_type_no_share (type, wi::to_widest (arg1),
++                        !POINTER_TYPE_P (TREE_TYPE (arg1)),
++                        TREE_OVERFLOW (arg1));
++      /* and restore reference tag */
++      new_node->int_cst.offset_reference = arg1->int_cst.offset_reference;
++      return new_node;
++    }
+ }
+ 
+ /* A subroutine of fold_convert_const handling conversions a REAL_CST
+diff --git a/gcc/java/class.c b/gcc/java/class.c
+index d1adb581524..f19f5a83e95 100644
+--- a/gcc/java/class.c
++++ b/gcc/java/class.c
+@@ -76,6 +76,12 @@ static tree build_symbol_entry (tree, tree);
+ static tree emit_assertion_table (tree);
+ static void register_class (void);
+ 
++/* added by jian.hu */
++static void
++emit_symbol_table_only (
++		vec<method_entry, va_gc> *decl_table,
++            tree the_syms_decl);
++
+ struct obstack temporary_obstack;
+ 
+ static const char *cyclic_inheritance_report;
+@@ -498,6 +504,21 @@ gen_indirect_dispatch_tables (tree type)
+ 
+ #undef GEN_TABLE
+ 
++void
++gen_patch_directive_tables (tree type)
++{
++  const char *type_name = IDENTIFIER_POINTER (mangled_classname ("", type)); 
++  char *buf = (char *) alloca (strlen (type_name)
++                               + strlen ("_ptable_syms_") + 1);
++  
++  sprintf (buf, "_ptable_syms_%s", type_name);
++  TYPE_PTABLE_SYMS_DECL(type) = build_decl (input_location, VAR_DECL, get_identifier (buf), symbols_array_type);
++  
++  TREE_STATIC (TYPE_PTABLE_SYMS_DECL(type)) = 1;
++  TREE_CONSTANT (TYPE_PTABLE_SYMS_DECL(type)) = 1;
++  DECL_IGNORED_P (TYPE_PTABLE_SYMS_DECL(type)) = 1;
++}
++
+ tree
+ push_class (tree class_type, tree class_name)
+ {
+@@ -1775,6 +1796,24 @@ add_table_and_syms (vec<constructor_elt, va_gc> **v,
+       TREE_CONSTANT (table_slot) = 1;
+     }
+ }
++
++static void
++add_syms (vec<constructor_elt, va_gc> **v,
++          vec<method_entry, va_gc> *methods,
++          const char *syms_name, tree syms_slot)
++{
++  if (methods == NULL)
++    {
++      PUSH_FIELD_VALUE (*v, syms_name, null_pointer_node);
++    }
++  else
++    {
++      pushdecl_top_level (syms_slot);
++      PUSH_FIELD_VALUE (*v, syms_name,
++                        build1 (ADDR_EXPR, symbols_array_ptr_type,
++                                syms_slot));
++    }
++}
+                     
+ void
+ make_class_data (tree type)
+@@ -2091,6 +2130,13 @@ make_class_data (tree type)
+ 	 TYPE_ITABLE_SYMS_DECL (type), ptr_type_node, 2);
+     }
+   
++  if (flag_patch_directive)
++    {
++      emit_symbol_table_only(
++            TYPE_PTABLE_METHODS(type),
++            TYPE_PTABLE_SYMS_DECL(type));
++    }
++
+   TYPE_CTABLE_DECL (type) = emit_catch_table (type);
+ 
+   START_RECORD_CONSTRUCTOR (v1, object_type_node);
+@@ -2190,7 +2236,6 @@ make_class_data (tree type)
+   PUSH_FIELD_VALUE (v2, "chain", null_pointer_node);
+   PUSH_FIELD_VALUE (v2, "aux_info", null_pointer_node);
+   PUSH_FIELD_VALUE (v2, "engine", null_pointer_node);
+-
+   if (TYPE_REFLECTION_DATA (current_class))
+     {
+       int i;
+@@ -2236,6 +2281,8 @@ make_class_data (tree type)
+     reflection_data = null_pointer_node;
+ 
+   PUSH_FIELD_VALUE (v2, "reflection_data", reflection_data);
++  add_syms(&v2, TYPE_PTABLE_METHODS(type),
++           "ptable_syms", TYPE_PTABLE_SYMS_DECL(type));
+   FINISH_RECORD_CONSTRUCTOR (cons, v2, class_type_node);
+ 
+   DECL_INITIAL (decl) = cons;
+@@ -2947,6 +2994,59 @@ build_symbol_entry (tree decl, tree special)
+   return build_symbol_table_entry (clname, name, signature);
+ } 
+ 
++void gen_patch_symbol_entry(tree decl, tree *clname, tree *name, tree *signature)
++{
++      gcc_assert(decl != NULL_TREE);
++      *clname = DECL_NAME (TYPE_NAME (DECL_CONTEXT (decl)));
++      *name = (TREE_CODE (decl) == FUNCTION_DECL && DECL_CONSTRUCTOR_P (decl))
++			? init_identifier_node
++			: DECL_NAME (decl);
++      *signature = build_java_signature (TREE_TYPE (decl));
++      *signature = unmangle_classname 
++			      (IDENTIFIER_POINTER (*signature),
++			       IDENTIFIER_LENGTH (*signature));
++}
++
++// by jian.hu
++// void get_symbol_entry (tree decl, tree special, tree *clname, tree *name, tree *signature)
++// {
++//   *clname = DECL_NAME (TYPE_NAME (DECL_CONTEXT (decl)));
++//   /* ???  Constructors are given the name foo.foo all the way through
++//      the compiler, but in the method table they're all renamed
++//      foo.<init>.  So, we have to do the same here unless we want an
++//      unresolved reference at runtime.  */
++//   *name = (TREE_CODE (decl) == FUNCTION_DECL 
++// 			  && DECL_CONSTRUCTOR_P (decl))
++// 			 ? init_identifier_node
++// 			 : DECL_NAME (decl);
++//   tree sig = build_java_signature (TREE_TYPE (decl));
++//   *signature = unmangle_classname 
++// 			      (IDENTIFIER_POINTER (sig),
++// 			       IDENTIFIER_LENGTH (sig));
++//   /* SPECIAL is either NULL_TREE or integer_one_node.  We emit
++//      signature addr+1 if SPECIAL, and this indicates to the runtime
++//      system that this is a "special" symbol, i.e. one that should
++//      bypass access controls.  */
++//   if (special != NULL_TREE)
++//     *signature = fold_build_pointer_plus (*signature, special);
++// } 
++
++// int get_symbol_entry_by_id (int id, tree *clname, tree *name, tree *signature)
++// {
++//   method_entry *e;
++//   unsigned i;
++// //   method_entry elem = {t, special};
++
++//   FOR_EACH_VEC_SAFE_ELT (TYPE_PTABLE_METHODS(output_class), i, e)
++//     if (i + 1 == id)
++//     {
++//       get_symbol_entry(e->method, e->special, clname, name, signature);
++//       return 1;
++//     }
++
++//   return 0;
++// }
++
+ /* Emit a symbol table: used by -findirect-dispatch.  */
+ 
+ tree
+@@ -3005,6 +3105,51 @@ emit_symbol_table (tree name, tree the_table,
+   return the_table;
+ }
+ 
++/* by jian.hu. Emit a symbol table only (no value array): used by -fpatch-directive. 
++   to do patching, only symbols are need as data. */
++
++void
++emit_symbol_table_only (
++		vec<method_entry, va_gc> *decl_table,
++            tree the_syms_decl)
++{
++  tree table, null_symbol;
++  unsigned index;
++  method_entry *e;
++  vec<constructor_elt, va_gc> *v = NULL;
++  
++  /* Only emit a table if this translation unit actually made any
++     references via it. */
++  if (!decl_table)
++    return ;
++
++  /* Build a list of _Jv_MethodSymbols for each entry in otable_methods. */
++  FOR_EACH_VEC_ELT (*decl_table, index, e)
++    CONSTRUCTOR_APPEND_ELT (v, NULL_TREE,
++			    build_symbol_entry (e->method, e->special));
++
++  /* Terminate the list with a "null" entry. */
++  null_symbol = build_symbol_table_entry (null_pointer_node,
++                                          null_pointer_node,
++                                          null_pointer_node);
++  CONSTRUCTOR_APPEND_ELT (v, NULL_TREE, null_symbol);
++
++  tree symbols_arr_type
++    = build_prim_array_type (symbol_type, vec_safe_length (v));
++
++  table = build_constructor (symbols_arr_type, v);
++
++  /* Make it the initial value for ptable_syms and emit the decl. */
++  TREE_TYPE (the_syms_decl) = symbols_arr_type;
++  relayout_decl (the_syms_decl);
++  DECL_INITIAL (the_syms_decl) = table;
++  DECL_ARTIFICIAL (the_syms_decl) = 1;
++  DECL_IGNORED_P (the_syms_decl) = 1;
++  rest_of_decl_compilation (the_syms_decl, 1, 0);
++
++  /* the flowing code from emit_symbol_table is to build to offset table, we don't need it. */
++}
++
+ /* Make an entry for the catch_classes list.  */
+ tree
+ make_catch_class_record (tree catch_class, tree classname)
+diff --git a/gcc/java/decl.c b/gcc/java/decl.c
+index a8c2f64c493..4ac25a5167b 100644
+--- a/gcc/java/decl.c
++++ b/gcc/java/decl.c
+@@ -899,6 +899,9 @@ java_init_decl_processing (void)
+   PUSH_FIELD (input_location, class_type_node, field, "engine", ptr_type_node);
+   PUSH_FIELD (input_location,
+ 	      class_type_node, field, "reflection_data", ptr_type_node);
++  PUSH_FIELD (input_location,
++	      class_type_node, field, "ptable_syms", 
++  	      symbols_array_ptr_type);
+   for (t = TYPE_FIELDS (class_type_node);  t != NULL_TREE;  t = DECL_CHAIN (t))
+     FIELD_PRIVATE (t) = 1;
+   push_super_field (class_type_node, object_type_node);
+diff --git a/gcc/java/expr.c b/gcc/java/expr.c
+index 9af9e751275..cf005f20b58 100644
+--- a/gcc/java/expr.c
++++ b/gcc/java/expr.c
+@@ -58,6 +58,10 @@ The Free Software Foundation is independent of Sun Microsystems, Inc.  */
+ #include "tree-iterator.h"
+ #include "target.h"
+ 
++tree unshare_expr (tree expr);
++// int search_ptable_index(tree t, tree special, tree *decl_ret);
++int search_ref_table(tree t, tree special);
++
+ static void flush_quick_stack (void);
+ static void push_value (tree);
+ static tree pop_value (tree);
+@@ -1729,6 +1733,35 @@ build_field_ref (tree self_value, tree self_class, tree name)
+ 
+       if (base_type != TREE_TYPE (self_value))
+ 	self_value = fold_build1 (NOP_EXPR, base_type, self_value);
++      /* put patch_directive condition before indirect_dispatch, so the former supresses the latter */
++      if (! flag_syntax_only && flag_patch_directive)
++      {
++	  self_value = java_check_reference (self_value, check);
++        int ref_id = search_ref_table(field_decl, NULL_TREE);
++        tree field_offset = build_int_cst(integer_type_node, (ref_id << 16) | 0x2333);
++        field_offset = unshare_expr(field_offset);
++        /* set the reference information. */
++        // must do a search in PTABLE, making sure all symbols are created.
++      //   tree ptable_index = build_int_cst(
++      //                         NULL_TREE, 
++      //                         get_symbol_table_index(field_decl, NULL_TREE, &TYPE_PTABLE_METHODS (output_class)));
++        TREE_INT_CST_OFFSET_REFERENCE(field_offset) = field_decl;
++        tree address;
++        address = fold_build_pointer_plus (self_value, field_offset);
++        address = fold_convert (build_pointer_type (TREE_TYPE (field_decl)), address);
++      //   if (DECL_FIELD_OFFSET(field_decl))
++      //       if (TREE_CODE(DECL_FIELD_OFFSET(field_decl)))
++      //             fprintf(stdout, "generating field_ref, offset = %d\n", (int)DECL_FIELD_OFFSET(field_decl)->int_cst.val[0]);
++      //       else 
++      //             fprintf(stdout, "generating field_ref, offset is not const\n");
++      //   else
++      //   {
++      //       fprintf(stdout, "generating field_ref, offset is NULL\n");
++      //       // DECL_FIELD_OFFSET(field_decl) = build_int_cst(NULL_TREE, 256);
++      //   }
++	  return build1 (INDIRECT_REF, TREE_TYPE (field_decl), address);
++      }
++
+       if (! flag_syntax_only && flag_indirect_dispatch)
+ 	{
+ 	  tree otable_index
+@@ -2315,6 +2348,44 @@ get_symbol_table_index (tree t, tree special,
+   return i + 1;
+ }
+ 
++// by jian.hu
++// int search_ptable_index(tree t, tree special, tree *decl_ret)
++// {
++//   if (decl_ret)
++//   {
++//     *decl_ret = TYPE_PTABLE_SYMS_DECL(output_class);
++//   }
++
++//   method_entry *e;
++//   unsigned i;
++// //   method_entry elem = {t, special};
++
++//   FOR_EACH_VEC_SAFE_ELT (TYPE_PTABLE_METHODS(output_class), i, e)
++//     if (t == e->method && special == e->special)
++//     {
++//       return i + 1;
++//     }
++
++//   return 0;
++// }
++
++/* by jian.hu */
++int search_ref_table(tree t, tree special)
++{
++      static vec<method_entry> ref_table;
++      // vec<method_entry, va_gc> *ref_table = TYPE_REF_TABLE(output_class);
++      method_entry elem = {t, special};
++
++      for (unsigned idx = 0; idx < ref_table.length(); ++idx)
++      {
++            method_entry &e = ref_table[idx];
++            if (t == e.method && special == e.special)
++                  return idx + 1;
++      }
++      ref_table.safe_push(elem);
++      return ref_table.length();
++}
++
+ tree 
+ build_invokevirtual (tree dtable, tree method, tree special)
+ {
+@@ -2323,8 +2394,38 @@ build_invokevirtual (tree dtable, tree method, tree special)
+     = build_pointer_type (nativecode_ptr_type_node);
+   tree method_index;
+   tree otable_index;
++  /* indicate method index in patch directive table. */
++//   tree ptable_index;
++
++  if (flag_patch_directive)
++    {
++      if (special)
++            fprintf(stderr, "met special, attention!\n");
++      // by jian.hu, when flag_patch_directive is on, generate ordinary vtable access code, 
++      // but add directive in method_index.
++      // method_index = DECL_VINDEX (method);
++      // if (method_index != NULL)
++      //       method_index = size_binop (MULT_EXPR, method_index,
++      //                         TYPE_SIZE_UNIT (nativecode_ptr_ptr_type_node));
++      // else 
++      // {
++      //       // fprintf(stdout, "method_index is NULL, changing it to 0x2333\n");
++      //       method_index = build_int_cst(NULL_TREE, 0x2333);
++      // }
++      int ref_id = search_ref_table(method, special);
++      if (TARGET_VTABLE_USES_DESCRIPTORS)
++            fprintf(stderr, "TARGET_VTABLE_USES_DESCRIPTORS, attention!\n");
++      method_index = build_int_cst(NULL_TREE, (ref_id << 16) | 0x2333);
++      method_index = unshare_expr(method_index);
++      gcc_assert(TREE_CODE(method_index) == INTEGER_CST);
+ 
+-  if (flag_indirect_dispatch)
++      // ptable_index = build_int_cst(
++      //                   NULL_TREE,
++      //                   get_symbol_table_index(method, special, &TYPE_PTABLE_METHODS(output_class)));
++
++      INTEGER_CST_CHECK (method_index)->int_cst.offset_reference = method;
++    }
++  else if (flag_indirect_dispatch)
+     {
+       gcc_assert (! CLASS_INTERFACE (TYPE_NAME (DECL_CONTEXT (method))));
+ 
+diff --git a/gcc/java/java-tree.h b/gcc/java/java-tree.h
+index 22c97893868..bc4a81df337 100644
+--- a/gcc/java/java-tree.h
++++ b/gcc/java/java-tree.h
+@@ -873,6 +873,9 @@ struct GTY(()) lang_decl {
+ #define TYPE_CTABLE_DECL(T)      (TYPE_LANG_SPECIFIC (T)->ctable_decl)
+ #define TYPE_CATCH_CLASSES(T)    (TYPE_LANG_SPECIFIC (T)->catch_classes)
+ 
++#define TYPE_PTABLE_METHODS(T)   (TYPE_LANG_SPECIFIC (T)->ptable_methods)
++#define TYPE_PTABLE_SYMS_DECL(T) (TYPE_LANG_SPECIFIC (T)->ptable_syms_decl)
++
+ #define TYPE_TO_RUNTIME_MAP(T)   (TYPE_LANG_SPECIFIC (T)->type_to_runtime_map)
+ #define TYPE_ASSERTIONS(T)   	 (TYPE_LANG_SPECIFIC (T)->type_assertions)
+ #define TYPE_PACKAGE(T)     	 (TYPE_LANG_SPECIFIC (T)->package)
+@@ -909,6 +912,9 @@ struct GTY(()) lang_type {
+   tree itable_decl;		/* The interfaces table.  */
+   tree itable_syms_decl;
+ 
++  vec<method_entry, va_gc> *ptable_methods; /* List of field/virtual method decls referred by this class, used only when flag_patch_directive = true  */
++  tree ptable_syms_decl;
++
+   tree ctable_decl;             /* The table of classes for the runtime
+ 				   type matcher.  */
+   vec<constructor_elt, va_gc> *catch_classes;
+diff --git a/gcc/java/jcf-parse.c b/gcc/java/jcf-parse.c
+index e609331ae6a..39557577486 100644
+--- a/gcc/java/jcf-parse.c
++++ b/gcc/java/jcf-parse.c
+@@ -1565,9 +1565,28 @@ java_layout_seen_class_methods (void)
+     }
+ }
+ 
++void gen_patch_directive_tables (tree type);
++
++// extern int (*search_ptable_index_func)(tree t, tree special, tree *decl_ret);
++// int search_ptable_index(tree t, tree special, tree *decl_ret);
++
++// extern void (*get_symbol_entry_func) (tree decl, tree special, tree *clname, tree *name, tree *signature);
++// void get_symbol_entry(tree decl, tree special, tree *clname, tree *name, tree *signature);
++
++// extern int (*get_symbol_entry_by_id_func) (int id, tree *clname, tree *name, tree *signature);
++// int get_symbol_entry_by_id (int id, tree *clname, tree *name, tree *signature);
++
++extern void (*gen_patch_symbol_entry_func)(tree decl, tree *clname, tree *name, tree *signature);
++void gen_patch_symbol_entry(tree decl, tree *clname, tree *name, tree *signature);
++
+ static void
+ parse_class_file (void)
+ {
++//   search_ptable_index_func = search_ptable_index;
++//   get_symbol_entry_func = get_symbol_entry;
++//   get_symbol_entry_by_id_func = get_symbol_entry_by_id;
++  gen_patch_symbol_entry_func = gen_patch_symbol_entry;
++
+   tree method;
+   location_t save_location = input_location;
+ 
+@@ -1586,6 +1605,7 @@ parse_class_file (void)
+   java_mark_class_local (current_class);
+ 
+   gen_indirect_dispatch_tables (current_class);
++  gen_patch_directive_tables (current_class);
+ 
+   for (method = TYPE_METHODS (current_class);
+        method != NULL_TREE; method = DECL_CHAIN (method))
+diff --git a/gcc/java/lang.opt b/gcc/java/lang.opt
+index 11fef6b2690..389b8f45df4 100644
+--- a/gcc/java/lang.opt
++++ b/gcc/java/lang.opt
+@@ -234,6 +234,10 @@ findirect-dispatch
+ Java Var(flag_indirect_dispatch)
+ Use offset tables for virtual method calls
+ 
++fpatch-directive
++Java Var(flag_patch_directive)
++generate patch directives instead of using offset tables, must be used with indirect-dispatch
++
+ finline-functions
+ Java
+ 
+diff --git a/gcc/print-tree.c b/gcc/print-tree.c
+index 6b36d0294bb..7dce8b63b32 100644
+--- a/gcc/print-tree.c
++++ b/gcc/print-tree.c
+@@ -145,6 +145,15 @@ print_node_brief (FILE *file, const char *prefix, const_tree node, int indent)
+ 
+       fprintf (file, " ");
+       print_dec (node, file, TYPE_SIGN (TREE_TYPE (node)));
++      if (node->int_cst.offset_reference != NULL_TREE)
++        {
++          fprintf (file, "[an offset]");
++        }
++        else
++        {
++          printf("non offset integer_cst met\n");
++        }
++        
+     }
+   if (TREE_CODE (node) == REAL_CST)
+     {
+diff --git a/gcc/tree-core.h b/gcc/tree-core.h
+index ad1bb231ebe..dd11e6680a0 100644
+--- a/gcc/tree-core.h
++++ b/gcc/tree-core.h
+@@ -1161,6 +1161,9 @@ struct GTY(()) tree_common {
+ 
+ struct GTY(()) tree_int_cst {
+   struct tree_typed typed;
++  tree offset_reference;  // added by jian.hu, if this filed is not NULL_TREE, then this int_const indicates 
++                          // a field/v-method offset. in that case, offset_reference is the declaration of 
++                          // corresponding field/method-vtable offset.
+   HOST_WIDE_INT val[1];
+ };
+ 
+diff --git a/gcc/tree-dump.c b/gcc/tree-dump.c
+index 620b3913654..af28efd1ad0 100644
+--- a/gcc/tree-dump.c
++++ b/gcc/tree-dump.c
+@@ -575,6 +575,10 @@ dequeue_and_dump (dump_info_p di)
+     case INTEGER_CST:
+       fprintf (di->stream, "int: ");
+       print_decs (t, di->stream);
++      if (t->int_cst.offset_reference != NULL_TREE)
++        {
++          fprintf (di->stream, " [an offset]");
++        }
+       break;
+ 
+     case STRING_CST:
+diff --git a/gcc/tree-pretty-print.c b/gcc/tree-pretty-print.c
+index d7c049f1f44..ec182dcf169 100644
+--- a/gcc/tree-pretty-print.c
++++ b/gcc/tree-pretty-print.c
+@@ -1435,6 +1435,13 @@ dump_generic_node (pretty_printer *pp, tree node, int spc, int flags,
+ 	  print_hex (val, pp_buffer (pp)->digit_buffer);
+ 	  pp_string (pp, pp_buffer (pp)->digit_buffer);
+ 	}
++      if (node->int_cst.offset_reference != NULL_TREE)
++      {
++        pp_left_bracket(pp);
++	  pp_string (pp, "ptable-idx: ");
++        dump_generic_node (pp, node->int_cst.offset_reference, spc, flags, false);
++        pp_right_bracket(pp);
++      }
+       if (TREE_OVERFLOW (node))
+ 	pp_string (pp, "(OVF)");
+       break;
+diff --git a/gcc/tree-ssa-forwprop.c b/gcc/tree-ssa-forwprop.c
+index a1ba1e09d79..2633e9e61a8 100644
+--- a/gcc/tree-ssa-forwprop.c
++++ b/gcc/tree-ssa-forwprop.c
+@@ -695,6 +695,18 @@ forward_propagate_addr_expr_1 (tree name, tree def_rhs,
+ 			       gimple_stmt_iterator *use_stmt_gsi,
+ 			       bool single_use_p)
+ {
++  /* added by jian.hu, indicates whether def_rhs has patch directive tag */
++  int has_patch_tag = 0;
++  if (TREE_OPERAND_LENGTH(TREE_OPERAND(def_rhs, 0)) >= 2)
++  {
++    const_tree offset_node = TREE_OPERAND(TREE_OPERAND(def_rhs, 0), 1);
++    if (TREE_CODE(offset_node) == INTEGER_CST)
++    {
++      has_patch_tag = TREE_INT_CST_OFFSET_REFERENCE(offset_node) != NULL_TREE;
++    }
++//     if (has_patch_tag) printf("met patch tag %d\n", (int)TREE_INT_CST_OFFSET_REFERENCE(offset_node)->int_cst.val[0]);
++  }
++
+   tree lhs, rhs, rhs2, array_ref;
+   gimple use_stmt = gsi_stmt (*use_stmt_gsi);
+   enum tree_code rhs_code;
+@@ -802,23 +814,39 @@ forward_propagate_addr_expr_1 (tree name, tree def_rhs,
+       if ((def_rhs_base = get_addr_base_and_unit_offset (TREE_OPERAND (def_rhs, 0),
+ 							 &def_rhs_offset)))
+ 	{
+-	  offset_int off = mem_ref_offset (lhs);
+-	  tree new_ptr;
+-	  off += def_rhs_offset;
+-	  if (TREE_CODE (def_rhs_base) == MEM_REF)
+-	    {
+-	      off += mem_ref_offset (def_rhs_base);
+-	      new_ptr = TREE_OPERAND (def_rhs_base, 0);
+-	    }
+-	  else
+-	    new_ptr = build_fold_addr_expr (def_rhs_base);
+-	  TREE_OPERAND (lhs, 0) = new_ptr;
+-	  TREE_OPERAND (lhs, 1)
+-	    = wide_int_to_tree (TREE_TYPE (TREE_OPERAND (lhs, 1)), off);
+-	  tidy_after_forward_propagate_addr (use_stmt);
+-	  /* Continue propagating into the RHS if this was not the only use.  */
+-	  if (single_use_p)
++        if (!has_patch_tag)
++        {
++  	    offset_int off = mem_ref_offset (lhs);
++  	    tree new_ptr;
++  	    off += def_rhs_offset;
++  	    if (TREE_CODE (def_rhs_base) == MEM_REF)
++  	      {
++  	        off += mem_ref_offset (def_rhs_base);
++  	        new_ptr = TREE_OPERAND (def_rhs_base, 0);
++  	      }
++  	    else
++  	      new_ptr = build_fold_addr_expr (def_rhs_base);
++  	    TREE_OPERAND (lhs, 0) = new_ptr;
++  	    TREE_OPERAND (lhs, 1)
++  	      = wide_int_to_tree (TREE_TYPE (TREE_OPERAND (lhs, 1)), off);
++  	    tidy_after_forward_propagate_addr (use_stmt);
++  	    /* Continue propagating into the RHS if this was not the only use.  */
++  	    if (single_use_p)
++  	      return true;
++        }
++        else if (integer_zerop (TREE_OPERAND (lhs, 1)))
++        {
++          /* this case added by jian.hu, when has patch tag and outter MEM_REF offset is zero.
++             pattern is:
++                  MEM_REF(def+0)=rhs, def=ADDR_EXPR(MEM_REF(base+off))
++               => MEM_REF(base+off)=rhs */
++          TREE_OPERAND (lhs, 0) = TREE_OPERAND(TREE_OPERAND (def_rhs, 0), 0);
++          tree offset_node = TREE_OPERAND(TREE_OPERAND (def_rhs, 0), 1);
++          TREE_OPERAND (lhs, 1) = fold_convert (TREE_TYPE (TREE_OPERAND (lhs, 1)),
++					                  offset_node);
++	    tidy_after_forward_propagate_addr (use_stmt);
+ 	    return true;
++        }
+ 	}
+       /* If the LHS is a plain dereference and the value type is the same as
+          that of the pointed-to type of the address we can put the
+@@ -888,27 +916,50 @@ forward_propagate_addr_expr_1 (tree name, tree def_rhs,
+   if (TREE_CODE (rhs) == MEM_REF
+       && TREE_OPERAND (rhs, 0) == name)
+     {
++      // if (has_patch_tag) printf("hit 6\n");
+       tree def_rhs_base;
+       HOST_WIDE_INT def_rhs_offset;
+       if ((def_rhs_base = get_addr_base_and_unit_offset (TREE_OPERAND (def_rhs, 0),
+ 							 &def_rhs_offset)))
+ 	{
+-	  offset_int off = mem_ref_offset (rhs);
+-	  tree new_ptr;
+-	  off += def_rhs_offset;
+-	  if (TREE_CODE (def_rhs_base) == MEM_REF)
+-	    {
+-	      off += mem_ref_offset (def_rhs_base);
+-	      new_ptr = TREE_OPERAND (def_rhs_base, 0);
+-	    }
+-	  else
+-	    new_ptr = build_fold_addr_expr (def_rhs_base);
+-	  TREE_OPERAND (rhs, 0) = new_ptr;
+-	  TREE_OPERAND (rhs, 1)
+-	    = wide_int_to_tree (TREE_TYPE (TREE_OPERAND (rhs, 1)), off);
+-	  fold_stmt_inplace (use_stmt_gsi);
+-	  tidy_after_forward_propagate_addr (use_stmt);
+-	  return res;
++        if (!has_patch_tag)
++        {
++	    offset_int off = mem_ref_offset (rhs);
++	    tree new_ptr;
++	    off += def_rhs_offset;
++	    if (TREE_CODE (def_rhs_base) == MEM_REF)
++	      {
++	        off += mem_ref_offset (def_rhs_base);
++	        new_ptr = TREE_OPERAND (def_rhs_base, 0);
++	      }
++	    else
++	      new_ptr = build_fold_addr_expr (def_rhs_base);
++	    TREE_OPERAND (rhs, 0) = new_ptr;
++	    TREE_OPERAND (rhs, 1)
++	      = wide_int_to_tree (TREE_TYPE (TREE_OPERAND (rhs, 1)), off);
++	    fold_stmt_inplace (use_stmt_gsi);
++	    tidy_after_forward_propagate_addr (use_stmt);
++	    return res;
++        }
++        else if (integer_zerop (TREE_OPERAND (rhs, 1)))
++        {
++          /* this case added by jian.hu, when has patch tag and outter MEM_REF offset is zero.
++             pattern is:
++                  lhs=MEM_REF(lhs+0), lhs=ADDR_EXPR(MEM_REF(base+off))
++               => lhs=MEM_REF(base+off) */
++          TREE_OPERAND (rhs, 0) = TREE_OPERAND(TREE_OPERAND (def_rhs, 0), 0);
++          tree offset_node = TREE_OPERAND(TREE_OPERAND (def_rhs, 0), 1);
++          TREE_OPERAND (rhs, 1) = fold_convert (TREE_TYPE (TREE_OPERAND (rhs, 1)),
++					                  offset_node);
++          fold_stmt_inplace (use_stmt_gsi);
++	    tidy_after_forward_propagate_addr (use_stmt);
++	    return res;
++        }
++        else
++        {
++          return false;
++        }
++        
+ 	}
+       /* If the RHS is a plain dereference and the value type is the same as
+          that of the pointed-to type of the address we can put the
+@@ -969,7 +1020,6 @@ forward_propagate_addr_expr_1 (tree name, tree def_rhs,
+        || TREE_CODE (TREE_OPERAND (array_ref, 1)) != INTEGER_CST)
+       && TREE_CODE (TREE_TYPE (array_ref)) != ARRAY_TYPE)
+     return false;
+-
+   rhs2 = gimple_assign_rhs2 (use_stmt);
+   /* Optimize &x[C1] p+ C2 to  &x p+ C3 with C3 = C1 * element_size + C2.  */
+   if (TREE_CODE (rhs2) == INTEGER_CST)
+diff --git a/gcc/tree.c b/gcc/tree.c
+index 665143716b5..b12db759b3c 100644
+--- a/gcc/tree.c
++++ b/gcc/tree.c
+@@ -1335,6 +1335,30 @@ force_fit_type (tree type, const wide_int_ref &cst,
+   return wide_int_to_tree (type, cst);
+ }
+ 
++/* added bu jian.hu, analogous to force_fit_type, except that this function always create new node,
++   instead of using shared node when no overflow. */
++tree
++force_fit_type_no_share (tree type, const wide_int_ref &cst,
++		int overflowable, bool overflowed)
++{
++  signop sign = TYPE_SIGN (type);
++
++  wide_int tmp = wide_int::from (cst, TYPE_PRECISION (type), sign);
++  tree t = build_new_int_cst (type, tmp);
++
++  /* If we need to set overflow flags, return a new unshared node.  */
++  if (overflowed || !wi::fits_to_tree_p (cst, type))
++    {
++      if (overflowed
++	  || overflowable < 0
++	  || (overflowable > 0 && sign == SIGNED))
++	{  
++	  TREE_OVERFLOW (t) = 1;
++	}
++    }
++  return t;  
++}
++
+ /* These are the hash table functions for the hash table of INTEGER_CST
+    nodes of a sizetype.  */
+ 
+@@ -1364,7 +1388,9 @@ int_cst_hasher::equal (tree x, tree y)
+ 
+   if (TREE_TYPE (xt) != TREE_TYPE (yt)
+       || TREE_INT_CST_NUNITS (xt) != TREE_INT_CST_NUNITS (yt)
+-      || TREE_INT_CST_EXT_NUNITS (xt) != TREE_INT_CST_EXT_NUNITS (yt))
++      || TREE_INT_CST_EXT_NUNITS (xt) != TREE_INT_CST_EXT_NUNITS (yt)
++      /* by jian.hu, tree equal test needs to check ref */
++      || TREE_INT_CST_OFFSET_REFERENCE (xt) != TREE_INT_CST_OFFSET_REFERENCE (yt))
+     return false;
+ 
+   for (int i = 0; i < TREE_INT_CST_NUNITS (xt); i++)
+@@ -2165,6 +2191,8 @@ make_int_cst_stat (int len, int ext_len MEM_STAT_DECL)
+ 
+   TREE_CONSTANT (t) = 1;
+ 
++  t->int_cst.offset_reference = NULL_TREE;  // added by jian.hu, set offset_reference filed to NULL_TREE
++
+   return t;
+ }
+ 
+@@ -7113,7 +7141,10 @@ tree_int_cst_equal (const_tree t1, const_tree t2)
+ 
+   if (TREE_CODE (t1) == INTEGER_CST
+       && TREE_CODE (t2) == INTEGER_CST
+-      && wi::to_widest (t1) == wi::to_widest (t2))
++      && wi::to_widest (t1) == wi::to_widest (t2)
++      && t1->int_cst.offset_reference == t2->int_cst.offset_reference /*the last condition is added
++            by jian.hu, two constants represents offset are considered equal, only if 
++            the reference field/method is the same */)
+     return 1;
+ 
+   return 0;
+@@ -7255,7 +7286,7 @@ simple_cst_equal (const_tree t1, const_tree t2)
+   switch (code1)
+     {
+     case INTEGER_CST:
+-      return wi::to_widest (t1) == wi::to_widest (t2);
++      return wi::to_widest (t1) == wi::to_widest (t2) && TREE_INT_CST_OFFSET_REFERENCE(t1) == TREE_INT_CST_OFFSET_REFERENCE(t2);
+ 
+     case REAL_CST:
+       return REAL_VALUES_IDENTICAL (TREE_REAL_CST (t1), TREE_REAL_CST (t2));
+diff --git a/gcc/tree.h b/gcc/tree.h
+index 9fe3ce61316..3b06696dce5 100644
+--- a/gcc/tree.h
++++ b/gcc/tree.h
+@@ -926,6 +926,8 @@ extern void omp_clause_range_check_failed (const_tree, const char *, int,
+ #define TREE_INT_CST_ELT(NODE, I) TREE_INT_CST_ELT_CHECK (NODE, I)
+ #define TREE_INT_CST_LOW(NODE) \
+   ((unsigned HOST_WIDE_INT) TREE_INT_CST_ELT (NODE, 0))
++#define TREE_INT_CST_OFFSET_REFERENCE(NODE) \
++ (INTEGER_CST_CHECK (NODE)->int_cst.offset_reference)
+ 
+ #define TREE_REAL_CST_PTR(NODE) (REAL_CST_CHECK (NODE)->real_cst.real_cst_ptr)
+ #define TREE_REAL_CST(NODE) (*TREE_REAL_CST_PTR (NODE))
+diff --git a/libjava/gij.cc b/libjava/gij.cc
+index c04b1d889a8..b18d75c9f70 100644
+--- a/libjava/gij.cc
++++ b/libjava/gij.cc
+@@ -15,6 +15,8 @@
+ #include <string.h>
+ #include <stdlib.h>
+ 
++void _Jv_RunPatch (JvVMInitArgs *vm_args, const char *name);
++
+ static void
+ help ()
+ {
+@@ -89,6 +91,8 @@ main (int argc, char const** argv)
+       sprintf (darg, "-Djava.class.path=%s", classpath);
+       add_option (vm_args, darg, NULL);
+     }
++  
++  const char *patch_file = NULL;
+ 
+   // Handle arguments to the java command.  Store in vm_args arguments
+   // handled by the invocation API.
+@@ -301,6 +305,10 @@ main (int argc, char const** argv)
+         {
+ 	  gcj::verifyClasses = false;
+ 	}
++      else if (! strcmp(arg, "-patch"))
++      {
++        patch_file = argv[++i];
++      }
+       else
+ 	{
+ 	  fprintf (stderr, "gij: unrecognized option -- `%s'\n", argv[i]);
+@@ -309,7 +317,7 @@ main (int argc, char const** argv)
+ 	}
+     }
+ 
+-  if (argc - i < 1)
++  if (argc - i < 1 && !patch_file)  // modified by jian.hu, when doing patch, no Main class is spefified.
+     {
+       fprintf (stderr, "Usage: gij [OPTION] ... CLASS [ARGS] ...\n");
+       fprintf (stderr, "          to invoke CLASS.main, or\n");
+@@ -328,7 +336,10 @@ main (int argc, char const** argv)
+       sprintf (darg, "-Djava.class.path=%s", argv[i]);
+       add_option (vm_args, darg, NULL);
+     }
+-
+-  _Jv_RunMain (&vm_args, NULL, argv[i], argc - i,
+-               (char const**) (argv + i), jar_mode);
++  
++  if (!patch_file)
++    _Jv_RunMain (&vm_args, NULL, argv[i], argc - i,
++                 (char const**) (argv + i), jar_mode);
++  else
++    _Jv_RunPatch (&vm_args, patch_file);
+ }
+diff --git a/libjava/include/jvm.h b/libjava/include/jvm.h
+index bd39a944c5d..43745a81af2 100644
+--- a/libjava/include/jvm.h
++++ b/libjava/include/jvm.h
+@@ -349,6 +349,12 @@ public:
+     pool->tags[index] = tags;
+     _Jv_MutexUnlock (&resolve_mutex);
+   }
++
++  /**!
++   * \brief look up offset for a method/field of a given class.
++   * \param class_name, name, signature: same as that in _Jv_MethodSymbol.
++  */
++  static int get_offset(_Jv_Utf8Const *class_name, _Jv_Utf8Const *name, _Jv_Utf8Const *signature);
+ };
+ 
+ /* Type of pointer used as finalizer.  */
+diff --git a/libjava/java/lang/Class.h b/libjava/java/lang/Class.h
+index ccca2bc5034..c7fb56ac42c 100644
+--- a/libjava/java/lang/Class.h
++++ b/libjava/java/lang/Class.h
+@@ -731,6 +731,8 @@ private:
+   _Jv_ExecutionEngine *engine;
+   // Reflection data.
+   unsigned char *reflection_data;
++  // Patch reference symbol table.
++  _Jv_MethodSymbol *ptable_syms;
+ };
+ 
+ // Inline functions that are friends of java::lang::Class
+diff --git a/libjava/link.cc b/libjava/link.cc
+index 25114085bfc..a3733b2e151 100644
+--- a/libjava/link.cc
++++ b/libjava/link.cc
+@@ -2103,3 +2103,116 @@ _Jv_Linker::wait_for_state (jclass klass, int state)
+     }
+ #endif
+ }
++
++int _Jv_Linker::get_offset(
++      _Jv_Utf8Const *class_name, _Jv_Utf8Const *name, _Jv_Utf8Const *signature)
++{
++      /* VMClass::getSystemClassLoader can only be called once, so use java::lang::ClassLoader::getSystemClassLoader!!! */
++      java::lang::ClassLoader *class_loader = java::lang::ClassLoader::getSystemClassLoader();
++      jclass target_class;
++      try {
++            target_class = _Jv_FindClass (class_name, class_loader);
++      }
++      catch (java::lang::Throwable *ex) {
++            fprintf(stdout, "fail loading class [%s]\n", class_name->chars());
++            return -1;
++      }
++      /* FIXME: here we set klass = target_class, this bypasses any access check! */
++      jclass klass = target_class;
++      _Jv_Method *meth = NULL;
++
++      uaddr special;
++      maybe_adjust_signature (signature, special);
++
++      if (target_class == NULL)
++        throw new java::lang::NoClassDefFoundError 
++            (_Jv_NewStringUTF (class_name->chars()));
++
++      // We're looking for a field or a method, and we can tell
++      // which is needed by looking at the signature.
++      if (signature->first() == '(' && signature->len() >= 2)
++	{
++	  // Looks like someone is trying to invoke an interface method
++	  if (target_class->isInterface())
++	    {
++	      using namespace java::lang;
++	      StringBuffer *sb = new StringBuffer();
++	      sb->append(JvNewStringLatin1("found interface "));
++	      sb->append(target_class->getName());
++	      sb->append(JvNewStringLatin1(" when searching for a class"));
++	      throw new VerifyError(sb->toString());
++	    }
++
++ 	  // If the target class does not have a vtable_method_count yet, 
++	  // then we can't tell the offsets for its methods, so we must lay 
++	  // it out now.
++	  wait_for_state(target_class, JV_STATE_PREPARED);
++
++	  try
++	    {
++	      meth = (search_method_in_superclasses 
++		      (target_class, klass, name, signature, 
++		       NULL, special == 0));
++	    }
++	  catch (::java::lang::IllegalAccessError *e)
++	    {
++	    }
++
++	  // Every class has a throwNoSuchMethodErrorIndex method that
++	  // it inherits from java.lang.Object.  Find its vtable
++	  // offset.
++	  static int throwNoSuchMethodErrorIndex;
++	  if (throwNoSuchMethodErrorIndex == 0)
++	    {
++	      Utf8Const* name 
++		= _Jv_makeUtf8Const ("throwNoSuchMethodError", 
++				     strlen ("throwNoSuchMethodError"));
++	      _Jv_Method* meth
++		= _Jv_LookupDeclaredMethod (&java::lang::Object::class$, 
++					    name, gcj::void_signature);
++	      throwNoSuchMethodErrorIndex 
++		= _Jv_VTable::idx_to_offset (meth->index);
++	    }
++	  
++	  // If we don't find a nonstatic method, insert the
++	  // vtable index of Object.throwNoSuchMethodError().
++	  // This defers the missing method error until an attempt
++	  // is made to execute it.	  
++        int offset;
++
++	  {  
++	    if (meth != NULL)
++	      offset = _Jv_VTable::idx_to_offset (meth->index);
++	    else
++	      offset = throwNoSuchMethodErrorIndex;		    
++	    
++	    if (offset == -1)
++	      fprintf (stdout, "Bad method index\n");
++	    JvAssert (meth->index < target_class->vtable_method_count);
++	    
++	//     klass->otable->offsets[index] = offset;
++	  }
++
++	  if (debug_link)
++	    {}  /* do nothing */
++	  return offset;
++	}
++      else
++      // Try fields.
++      {
++	  wait_for_state(target_class, JV_STATE_PREPARED);
++	  jclass found_class;
++	  _Jv_Field *the_field = NULL;
++	  the_field = find_field(klass, target_class, &found_class,
++	  	                  name, signature);
++	  if ((the_field->flags & java::lang::reflect::Modifier::STATIC))
++        {
++            fprintf(stdout, "IncompatibleClassChange\n");
++	      return -1;
++        }
++	  else
++	    return the_field->u.boffset;
++      }
++      /* unreachable */
++      return -1;
++}
+\ No newline at end of file
+diff --git a/libjava/prims.cc b/libjava/prims.cc
+index 652cf5b4aa5..2171475479e 100644
+--- a/libjava/prims.cc
++++ b/libjava/prims.cc
+@@ -2036,3 +2036,571 @@ _Jv_PrependVersionedLibdir (char* libpath)
+ 
+   return retval;
+ }
++
++/* by jian.hu.
++ * The following code are related to patching!!
++ */
++
++void RunPatch(const char *name);
++
++void
++_Jv_RunPatch (JvVMInitArgs *vm_args, const char *name)
++{
++  java::lang::Runtime *runtime = NULL;
++
++  try
++    {
++      if (_Jv_CreateJavaVM (vm_args) < 0)
++	{
++	  fprintf (stderr, "libgcj: couldn't create virtual machine\n");
++	  exit (1);
++	}
++      
++      if (vm_args == NULL)
++	  gcj::vmArgs = JvConvertArgv(0, NULL);
++      else
++	{
++	  const char* vmArgs[vm_args->nOptions];
++	  const char** vmPtr = vmArgs;
++	  struct _Jv_VMOption* optionPtr = vm_args->options;
++	  for (int i = 0; i < vm_args->nOptions; ++i)
++	    *vmPtr++ = (*optionPtr++).optionString;
++	  gcj::vmArgs = JvConvertArgv(vm_args->nOptions, vmArgs);
++	}
++
++      // Get the Runtime here.  We want to initialize it before searching
++      // for `main'; that way it will be set up if `main' is a JNI method.
++      runtime = java::lang::Runtime::getRuntime ();
++
++      using namespace gnu::java::lang;
++
++#ifdef INTERPRETER
++      // Start JVMTI if an agent function has been found.
++      if (jvmti_agentonload)
++        (*jvmti_agentonload) (_Jv_GetJavaVM (), jvmti_agent_opts, NULL);
++
++      // Start JDWP
++      if (remoteDebug)
++	{
++	  using namespace gnu::classpath::jdwp;
++	  VMVirtualMachine::initialize ();
++	  Jdwp *jdwp = new Jdwp ();
++	  jdwp->setDaemon (true);	  
++	  jdwp->configure (JvNewStringLatin1 (jdwpOptions));
++	  jdwp->start ();
++
++	  // Wait for JDWP to initialize and start
++	  jdwp->join ();
++	}
++      // Send VMInit
++      if (JVMTI_REQUESTED_EVENT (VMInit))
++	_Jv_JVMTI_PostEvent (JVMTI_EVENT_VM_INIT, main_thread);
++#endif // INTERPRETER
++    }
++  catch (java::lang::Throwable *t)
++    {
++      java::lang::System::err->println (JvNewStringLatin1 
++        ("Exception during runtime initialization"));
++      t->printStackTrace();
++      if (runtime)
++	java::lang::Runtime::exitNoChecksAccessor (1);
++      // In case the runtime creation failed.
++      ::exit (1);
++    }
++  
++  RunPatch(name);
++
++#ifdef INTERPRETER
++  // Send VMDeath
++  if (JVMTI_REQUESTED_EVENT (VMDeath))
++    {
++      java::lang::Thread *thread = java::lang::Thread::currentThread ();
++      JNIEnv *jni_env = _Jv_GetCurrentJNIEnv ();
++      _Jv_JVMTI_PostEvent (JVMTI_EVENT_VM_DEATH, thread, jni_env);
++    }
++
++  // Run JVMTI AgentOnUnload if it exists and an agent is loaded.
++  if (jvmti_agentonunload)
++    (*jvmti_agentonunload) (_Jv_GetJavaVM ());
++#endif // INTERPRETER
++
++  // If we got here then something went wrong, as MainThread is not
++  // supposed to terminate.
++  ::exit (1);
++}
++
++const char * next_blank(const char *p)
++{
++  while (*p != '\0' && *p != ' ')
++  {
++    ++p;
++  }
++  return p;
++}
++
++#define HAVE_MMAP
++#define HAVE_FCNTL_H
++#define HAVE_STAT
++
++#if defined(HAVE_MMAP) && defined(HAVE_FCNTL_H) && defined(HAVE_STAT)
++#include <sys/mman.h>
++#include <elf.h>
++#include <sys/stat.h>
++#include <sys/types.h>
++#include <fcntl.h>
++#include <string.h>
++#include <stdlib.h>
++#include <stdio.h>
++#include <stdint.h>
++
++void GenPatchOut(const char *src, const char *dst)
++{
++  int src_fd = open(src, O_RDWR);
++  int dst_fd = open(dst, O_RDWR | O_CREAT);
++  char buffer[1024];
++  int len;
++  while ((len = read(src_fd, buffer, 1024)))
++  {
++    write(dst_fd, buffer, len);
++  }
++  close(src_fd);
++  close(dst_fd);
++}
++
++namespace elf_patcher
++{
++
++typedef char const * c_str_t;
++
++struct section_t {
++    section_t() : section_index(0) {}
++    int section_index; 
++    intptr_t section_offset, section_addr;
++    c_str_t section_name;
++    c_str_t section_type; 
++    int section_size, section_ent_size, section_addr_align;
++};
++
++struct segment_t {
++    c_str_t segment_type, *segment_flags;
++    long segment_offset, segment_virtaddr, segment_physaddr, segment_filesize, segment_memsize;
++    int segment_align;
++};
++
++struct symbol_t {
++    symbol_t() : symbol_num(0), symbol_size(0) {}
++    c_str_t symbol_index;
++    intptr_t symbol_value;
++    int symbol_num, symbol_size;
++    c_str_t symbol_type, symbol_bind, symbol_visibility, symbol_name, symbol_section;      
++};
++
++typedef struct {
++    intptr_t relocation_offset, relocation_info, relocation_symbol_value;
++    c_str_t relocation_type, relocation_symbol_name, relocation_section_name;
++    intptr_t relocation_plt_address;
++} relocation_t;
++
++
++class Elf_patcher {
++public:
++      Elf_patcher (const char * program_path): m_program_path(program_path) {   
++            load_memory_map();
++      }
++      
++      uint8_t *get_memory_map() {
++            return m_mmap_program;
++      }
++
++      void do_patch();
++
++      const Elf64_Shdr * get_section(c_str_t section_name);
++
++      const Elf64_Sym * get_symbol(c_str_t sym_name);
++
++      // uint8_t *get_symbol_
++        
++    private:
++      void load_memory_map();
++
++      bool patch_insn(uint8_t *insn, int true_offset);
++
++      const char * get_section_type(int tt);
++
++      const char * get_segment_type(uint32_t &seg_type);
++      const char * get_segment_flags(uint32_t &seg_flags);
++
++      const char * get_symbol_type(uint8_t &sym_type);
++      const char * get_symbol_bind(uint8_t &sym_bind);
++      const char * get_symbol_visibility(uint8_t &sym_vis);
++      const char * get_symbol_index(uint16_t &sym_idx);
++
++      const char * get_relocation_type(uint64_t &rela_type);
++      //   intptr_t get_rel_symbol_value(uint64_t &sym_idx, std::vector<symbol_t> &syms);
++      //   const char * get_rel_symbol_name(
++      //       uint64_t &sym_idx, std::vector<symbol_t> &syms);
++
++      const char * m_program_path; 
++      uint8_t *m_mmap_program;
++};
++
++void Elf_patcher::load_memory_map()
++{
++      int fd;
++      struct stat st;
++
++      if ((fd = open(m_program_path, O_RDWR)) < 0) {
++            printf("Err: open\n");
++            exit(-1);
++      }
++      if (fstat(fd, &st) < 0) {
++            printf("Err: fstat\n");
++            exit(-1);
++      }
++      m_mmap_program = static_cast<uint8_t*>(mmap(NULL, st.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0));
++      if (m_mmap_program == MAP_FAILED) {
++            printf("Err: mmap\n");
++            exit(-1);
++      }
++
++      Elf64_Ehdr *header = (Elf64_Ehdr*)m_mmap_program;
++      if (header->e_ident[EI_CLASS] != ELFCLASS64) {
++            printf("Only 64-bit files supported\n");
++            exit(1);
++      }
++}
++
++const Elf64_Shdr * Elf_patcher::get_section(c_str_t name)
++{
++      const Elf64_Ehdr *ehdr = (Elf64_Ehdr*)m_mmap_program;
++      const Elf64_Shdr *shdr = (Elf64_Shdr*)(m_mmap_program + ehdr->e_shoff);
++      int shnum = ehdr->e_shnum;
++
++      const Elf64_Shdr *sh_strtab = &shdr[ehdr->e_shstrndx];
++      const char *const sh_strtab_p = (char*)m_mmap_program + sh_strtab->sh_offset;
++
++      for (int i = 0; i < shnum; ++i) 
++      {
++            c_str_t sh_name = sh_strtab_p + shdr[i].sh_name;
++            if (strcmp(sh_name, name) == 0) {
++                  return &shdr[i];
++            }
++      }
++      return NULL;
++}
++
++const Elf64_Sym * Elf_patcher::get_symbol(c_str_t sym_name)
++{
++      // get headers for offsets
++      const Elf64_Ehdr *ehdr = (Elf64_Ehdr*)m_mmap_program;
++      const Elf64_Shdr *shdr = (Elf64_Shdr*)(m_mmap_program + ehdr->e_shoff);
++
++      c_str_t sh_strtab_p = reinterpret_cast<c_str_t>(m_mmap_program) + get_section(".strtab")->sh_offset;
++      c_str_t sh_dynstr_p = NULL;
++      {
++            const Elf64_Shdr *sh_dynstr = get_section(".dynstr");
++            if (sh_dynstr != NULL)
++                  sh_dynstr_p = reinterpret_cast<c_str_t>(m_mmap_program + sh_dynstr->sh_offset);
++      }
++
++      /* iterative throught all sections, and try to find symbol in SHT_SYMTAB and SHT_DYNSYM */
++      int shnum = ehdr->e_shnum;
++      for (int i = 0; i < shnum; ++i)
++      {
++            const Elf64_Shdr &sec = shdr[i];
++            int sh_type = sec.sh_type;
++            if (sh_type != SHT_SYMTAB /*SHT_SYMTAB*/ && sh_type != SHT_DYNSYM /*SHT_DYNSYM*/)
++                  continue;
++            
++            unsigned total_syms = sec.sh_size / sizeof(Elf64_Sym);
++            const Elf64_Sym *syms_data = reinterpret_cast<Elf64_Sym*>(m_mmap_program + sec.sh_offset);
++
++            for (unsigned idx = 0; idx < total_syms; ++idx) 
++            {
++                  if (sec.sh_type == 2 && strcmp(sh_strtab_p + syms_data[idx].st_name, sym_name) == 0)
++                        return &syms_data[idx];
++                  if (sec.sh_type == 11 && sh_dynstr_p != NULL && strcmp(sh_dynstr_p + syms_data[idx].st_name, sym_name) == 0)
++                        return &syms_data[idx];
++            }
++      }
++      return NULL;
++}
++
++bool Elf_patcher::patch_insn(uint8_t *insn_p, int real_disp)
++{
++      /* 1. find the displacement position, and its size. */
++      /* pointers to different parts */
++      uint8_t *disp_p = NULL, *ModRM_p = NULL, *SIB_p = NULL, *REX_p = NULL;
++      int disp_size_log = 0;
++      /* this is actually deassembling, since x86 is so complex, there may be many conditions left out. */
++      bool operand_size_override = false;
++      if (*insn_p == 0x66)
++      {
++            fprintf(stdout, "operand size override, attention\n");
++            operand_size_override = true;
++            ++insn_p;
++      }
++      /* if it is VEX prefix */
++      if (*insn_p == 0xc4 || *insn_p == 0xc5)
++      {
++            fprintf(stdout, "AVX instruction met, attention\n");
++            if (*insn_p == 0xc4)
++                  insn_p += 3;
++            else
++                  insn_p += 2;            
++      }
++      /* now insn_p points to the opcode or REX prefix */
++      /* if it is REX prefix */
++      if ((*insn_p & 0xf0) == 0x40)
++      {
++            REX_p = insn_p;
++            ++insn_p;
++      }
++      /* now insn_p points to begin of opcode */
++      switch (static_cast<unsigned>(*insn_p))
++      {
++      case 0x0f:
++            if (*(insn_p + 1) == 0x3a || *(insn_p + 1) == 0x38)
++                  ModRM_p = insn_p + 3;
++            else
++                  ModRM_p = insn_p + 2;
++            break;
++      
++      default:
++            ModRM_p = insn_p + 1;
++            break;
++      }
++
++      if (ModRM_p == NULL)
++      {
++            fprintf(stdout, "ModR/M not found for instruction with opcode[0] = %2x\n", static_cast<unsigned>(*insn_p));
++            return false;
++      }
++      /* now according to ModR/M, calc the pointer to SIB, Disp and its size. */
++      unsigned ModRM = *ModRM_p;
++      unsigned Mod = ModRM >> 6, RM = ModRM & 0x7;
++      if (Mod == 0x0)
++      {
++            if (RM == 0x4)
++                  SIB_p = ModRM_p + 1;
++            else if (RM == 0x5)
++            {
++                  /* 32bit displacement */
++                  disp_p = ModRM_p + 1;
++                  disp_size_log = 2;
++            }
++      }
++      else if (Mod == 0x1)
++      {
++            if (RM == 0x4)
++            {
++                  SIB_p = ModRM_p + 1;
++                  disp_p = SIB_p + 1;
++            }
++            else
++            {
++                  disp_p = ModRM_p + 1;
++            }
++            disp_size_log = 0;
++      }
++      else if (Mod == 0x2)
++      {
++            if (RM == 0x4)
++            {
++                  SIB_p = ModRM_p + 1;
++                  disp_p = SIB_p + 1;
++            }
++            else
++            {
++                  disp_p = ModRM_p + 1;
++            }
++            disp_size_log = 2;
++      }
++      /* now, if SIB exists, calc the disp_p */
++      if (SIB_p != NULL)
++      {
++            if (Mod == 0x0)
++            {
++                  disp_p = SIB_p + 1;
++                  disp_size_log = 2;
++            }
++      }
++
++      if (disp_p == NULL)
++      {
++            fprintf(stdout, "can't find displacement for instruction with opcode[0] = %x\n", static_cast<unsigned>(*insn_p));
++            return false;
++      }
++      /* now we should have got the position of displacement and its length */
++      switch (disp_size_log)
++      {
++      // case 0:  /* 1-bit displacement */
++      //       // fprintf(stdout, "original displacement = %x[B]\n", static_cast<unsigned>(*disp_p));
++      //       // if (static_cast<unsigned>(*disp_p) != 0x2333)
++      //       //       fprintf(stdout, "!!!attention, original displacement not 0x100\n");
++      //       if (real_disp > 127 || real_disp < -128)
++      //             fprintf(stdout, "real displacement out of range for 1 byte: %d", real_disp);
++      //       *disp_p = static_cast<uint8_t>(real_disp);
++      //       return true;
++      case 1:  /* 2-bit displacement */
++            // fprintf(stdout, "original displacement = %x[W]\n", *reinterpret_cast<uint16_t*>(disp_p));
++            if (*reinterpret_cast<uint16_t*>(disp_p) != 0x2333 && *reinterpret_cast<int16_t*>(disp_p) != real_disp)
++            {
++                  fprintf(stdout, "!!!attention, original displacement not 0x100\n");
++                  return false;
++            }
++            if (real_disp > INT16_MAX || real_disp < INT16_MIN)
++                  fprintf(stdout, "real displacement out of range for 2 bytes: %d", real_disp);
++            *reinterpret_cast<uint16_t*>(disp_p) = static_cast<uint16_t>(real_disp);
++            return true;
++      case 2:  /* 4-bit displacement */
++            // fprintf(stdout, "original displacement = %x[D]\n", *reinterpret_cast<uint32_t*>(disp_p));
++            if ((*reinterpret_cast<uint32_t*>(disp_p) & 0xffff) != 0x2333 && *reinterpret_cast<int32_t*>(disp_p) != real_disp)
++            {
++                  fprintf(stdout, "!!!attention, original displacement not magic ref_id\n");
++                  return false;
++            }
++            if (real_disp > INT32_MAX || real_disp < INT32_MIN)
++                  fprintf(stdout, "real displacement out of range for 4 bytes: %d", real_disp);
++            *reinterpret_cast<uint32_t*>(disp_p) = static_cast<uint32_t>(real_disp);
++            return true;
++      case 0:
++      default:
++            fprintf(stdout, "unhandled displacement size %d\n", 1 << disp_size_log);
++            return false;
++      }
++}
++
++void Elf_patcher::do_patch()
++{
++      // header of elf and section table
++      const Elf64_Ehdr *ehdr = (Elf64_Ehdr*)m_mmap_program;
++      const Elf64_Shdr *shdr = (Elf64_Shdr*)(m_mmap_program + ehdr->e_shoff);
++
++      const Elf64_Half elf_type = ehdr->e_type;
++
++      /* first find the patch_note section */
++      const c_str_t patch_note_sh_name = "patch_note";
++      const Elf64_Shdr *note_section_hdr = get_section(patch_note_sh_name);
++      if (note_section_hdr != NULL)
++      {
++            fprintf(stdout, "section found, length = %u\n", (unsigned)note_section_hdr->sh_size);
++      }
++      else
++      {
++            fprintf(stdout, "didn't found patch_note section, exiting\n");
++            return;
++      }
++
++      uint8_t *head = static_cast<uint8_t*>(m_mmap_program + note_section_hdr->sh_offset);
++      uint8_t *ptr = head, *end = head + note_section_hdr->sh_size;
++      int fail_count = 0;
++      while (ptr < end)
++      {
++            /* the symbol of function to which the patch point belong */
++            c_str_t sym = reinterpret_cast<c_str_t>(ptr);
++            /* the reference target */
++            c_str_t ref = sym + strlen(sym) + 1;
++            /* the offset of the patch point relative to function start */
++            intptr_t offset_p = reinterpret_cast<intptr_t>(ref + strlen(ref) + 1);
++            // align to 4.
++            if ((offset_p & 0x3) != 0)
++                  offset_p = (offset_p & ~0x3) + 4;
++            int32_t offset = *reinterpret_cast<int32_t*>(offset_p);
++            // fprintf(stdout, "@%s + %d\n", sym, offset);
++
++            ptr = reinterpret_cast<uint8_t*>(offset_p + sizeof(int32_t));
++            
++            /* calc new offset */
++            const char *p = ref, *next;
++            next = next_blank(p);
++            _Jv_Utf8Const *sym_class_name = _Jv_makeUtf8Const(p, next - p);
++
++            p = next + 1;
++            next = next_blank(p);
++            _Jv_Utf8Const *sym_name = _Jv_makeUtf8Const(p, next - p);
++
++            p = next + 1;
++            next = next_blank(p);
++            _Jv_Utf8Const *sym_signature = _Jv_makeUtf8Const(p, next - p);
++            // fprintf(stdout, "clname=%s, name=%s, sig=%s\n", sym_class_name->chars(), sym_name->chars(), sym_signature->chars());
++            // fprintf(stdout, "try getting real displacement\n");
++            int real_disp = _Jv_Linker::get_offset(sym_class_name, sym_name, sym_signature);
++            if (real_disp == -1)
++            {
++                  fprintf(stdout, "failed to get real displacement\n");
++                  ++fail_count;
++                  continue;
++            }
++            // fprintf(stdout, "%d\n", real_disp);
++
++            /* the the function symbol */
++            const Elf64_Sym *func_sym = get_symbol(sym);
++            if (func_sym == NULL)
++            {
++                  fprintf(stdout, "function symbol not found, skipping\n");
++                  ++fail_count;
++                  continue;
++            }
++            // fprintf(stdout, "st_value = %d, ", func_sym->st_value);
++
++            // TODO: some checks need to be done.
++            /* the instruction to be patched */
++            // TODO: for .so/.exe files, the st_value is not offset relative to section head. 
++            uint8_t *insn_p;
++            if (elf_type == ET_REL)
++                  /* the st_value of symbol in relocatable file is offset relative to section head. */
++                  insn_p = m_mmap_program + shdr[func_sym->st_shndx].sh_offset + func_sym->st_value + offset;
++            else if (elf_type == ET_EXEC || elf_type == ET_DYN)
++                  /* st_value in executable file or shared object file is the virtual address of symbol when loaded, 
++                     so we subtract it by address of it's section. */
++                  insn_p = m_mmap_program + shdr[func_sym->st_shndx].sh_offset
++                              + (func_sym->st_value - shdr[func_sym->st_shndx].sh_addr) + offset;
++            else 
++            {
++                  fprintf(stdout, "unhandled elf_type %d\n", elf_type);
++                  ++fail_count;
++                  break;
++            }
++
++            // fprintf(stdout, "*insn_p = %x\n", static_cast<unsigned>(*insn_p));
++
++            if (!patch_insn(insn_p, real_disp)) {
++                  ++fail_count;
++                  fprintf(stdout, "failure @%s + %d\n clname=%s, name=%s, sig=%s\n real_disp = %d\n", 
++                              sym, offset, 
++                              sym_class_name->chars(), sym_name->chars(), sym_signature->chars(),
++                              real_disp);
++            }
++            // fprintf(stdout, "end try patching one\n");
++      }
++      fprintf(stdout, "failures: %d\n", fail_count);
++}
++
++}  // namespace elf_patcher
++
++void RunPatch(const char *name)
++{
++  const char *src = name;
++  char *dst = static_cast<char *>(malloc((strlen(src) + strlen(".patched") + 1) * sizeof(char)));
++  strcpy(dst, src);
++  strcat(dst, ".patched");
++  fprintf(stdout, "creating outfile %s\n", dst);
++  
++  GenPatchOut(src, dst);
++
++  using elf_patcher::Elf_patcher;
++  Elf_patcher patcher(dst);
++  patcher.do_patch();
++
++  free(dst);
++}
++
++#else
++
++void RunPatch(const char *name)
++{
++  fprintf(stdout, "some library not found, can't do patching");
++}
++
++#endif
+\ No newline at end of file

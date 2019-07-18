@@ -1,0 +1,23 @@
+ jian@jian-B85-HD3:~/Documents/gcc$ git diff 9d0507742960aa9f2b99bc6e9584655ecc611792 HEAD --compact-summary
+ .gitignore                |   8 +++
+ gcc/final.c               | 220 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ gcc/fold-const.c          |  28 +++++++---
+ gcc/java/class.c          | 147 ++++++++++++++++++++++++++++++++++++++++++++++++++++-
+ gcc/java/decl.c           |   3 ++
+ gcc/java/expr.c           | 103 ++++++++++++++++++++++++++++++++++++-
+ gcc/java/java-tree.h      |   6 +++
+ gcc/java/jcf-parse.c      |  20 ++++++++
+ gcc/java/lang.opt         |   4 ++
+ gcc/print-tree.c          |   9 ++++
+ gcc/tree-core.h           |   3 ++
+ gcc/tree-dump.c           |   4 ++
+ gcc/tree-pretty-print.c   |   7 +++
+ gcc/tree-ssa-forwprop.c   | 116 ++++++++++++++++++++++++++++++------------
+ gcc/tree.c                |  37 ++++++++++++--
+ gcc/tree.h                |   2 +
+ libjava/gij.cc            |  19 +++++--
+ libjava/include/jvm.h     |   6 +++
+ libjava/java/lang/Class.h |   2 +
+ libjava/link.cc           | 113 +++++++++++++++++++++++++++++++++++++++++
+ libjava/prims.cc          | 568 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 21 files changed, 1377 insertions(+), 48 deletions(-)
